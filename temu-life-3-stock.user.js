@@ -4,7 +4,7 @@
 // @description  增加库存（自改版，无需下载器EXE，带可视化配置、接口日志和业务明细）
 // @author       TonyTonyYang
 // @match        https://agentseller.temu.com/newon/product-select*
-// @version      2026.0518.11
+// @version      2026.0518.12
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
@@ -425,7 +425,7 @@ function ensureNoExeConfigButton() {
         root,
         config: null,
         state: {
-            tab: "malls",
+            tab: "prices",
             group: "normal",
             search: "",
             importText: "",
@@ -836,9 +836,9 @@ function noExeRenderPanel() {
             <button class="noexe-icon-btn" type="button" data-action="close">×</button>
         </div>
         <div class="noexe-tabs">
-            ${renderNoExeTab("malls", "店铺")}
             ${renderNoExeTab("prices", "阶梯核价")}
             ${renderNoExeTab("advanced", "导入导出")}
+            ${renderNoExeTab("malls", "店铺")}
         </div>
         <div class="noexe-body">${bodyHtml}</div>
         <div class="noexe-footer">
@@ -1974,10 +1974,4 @@ ensureNoExeConfigButton();
         }
     }
 })();
-
-
-
-
-
-
 
