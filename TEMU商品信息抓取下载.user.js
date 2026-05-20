@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Temu 商品信息抓取下载 GitHub更新版
 // @namespace    https://bbs.tampermonkey.net.cn/
-// @version      4.29.2
+// @version      4.29.3
 // @description  批量抓取 Temu 商品（支持多币种价格/销量筛选、生成销量TXT统计、中文/英文销量识别、JPG/PNG可选、原始字节下载、自动跳过推荐区、并发下载、自定义间隔）
 // @author       Gemini
 // @match        https://www.temu.com/*
@@ -20,12 +20,14 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '4.29.2';
+    const SCRIPT_VERSION = '4.29.3';
     const STORAGE_KEY = 'TEMU_SCRAPED_SHOPS_STORAGE';
     const IMAGE_FORMAT_KEY = 'TEMU_IMAGE_FORMAT';
     const BACKUP_TIME_KEY = 'TEMU_SCRAPED_SHOPS_LAST_BACKUP_TIME';
     const BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
     const GITHUB_SYNC_CONFIG_KEY = 'TEMU_SCRAPED_SHOPS_GITHUB_SYNC_CONFIG';
+    const GITHUB_AUTO_SYNC_TIME_KEY = 'TEMU_SCRAPED_SHOPS_LAST_GITHUB_AUTO_SYNC_TIME';
+    const GITHUB_AUTO_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
     const GITHUB_API_VERSION = '2022-11-28';
     const DEFAULT_GITHUB_SYNC_CONFIG = {
         owner: 'jianpanlan0-svg',
@@ -112,6 +114,13 @@
                 seen.add(key);
                 return true;
             });
+    }
+
+    function areShopListsEqual(left, right) {
+        const leftList = normalizeShopList(left);
+        const rightList = normalizeShopList(right);
+        if (leftList.length !== rightList.length) return false;
+        return leftList.every((item, index) => item === rightList[index]);
     }
 
     function normalizeShopNameForCompare(name) {
@@ -320,6 +329,43 @@
         return parseGitHubBackupContent(base64ToUtf8(file.content));
     }
 
+    function markGitHubAutoSyncTime() {
+        GM_setValue(GITHUB_AUTO_SYNC_TIME_KEY, Date.now());
+    }
+
+    function shouldRunGitHubAutoSync(config) {
+        if (!config.token) return false;
+        if (getScrapedShops().length === 0) return false;
+        const lastSyncTime = parseInt(GM_getValue(GITHUB_AUTO_SYNC_TIME_KEY, 0), 10) || 0;
+        return Date.now() - lastSyncTime >= GITHUB_AUTO_SYNC_INTERVAL_MS;
+    }
+
+    async function mergeShopListWithGitHub(config, localList) {
+        let remoteList = [];
+        try {
+            remoteList = await downloadShopListFromGitHub(config);
+        } catch (error) {
+            if (!String(error.message || '').includes('还没有备份文件')) throw error;
+        }
+        const mergedList = normalizeShopList(localList.concat(remoteList));
+        if (areShopListsEqual(remoteList, mergedList)) return mergedList;
+        return uploadShopListToGitHub(config, mergedList);
+    }
+
+    async function autoSyncGitHubBackupDaily() {
+        const config = getGitHubSyncConfig();
+        if (!shouldRunGitHubAutoSync(config)) return;
+
+        markGitHubAutoSyncTime();
+        try {
+            const savedList = await mergeShopListWithGitHub(config, getScrapedShops());
+            GM_setValue(STORAGE_KEY, savedList);
+            updateStatusText(`已自动合并同步 GitHub\n共 ${savedList.length} 个`);
+        } catch (error) {
+            updateStatusText(`GitHub 自动同步失败\n${error.message || error}`);
+        }
+    }
+
     function escapeHtml(value) {
         return String(value == null ? '' : value).replace(/[&<>"']/g, char => ({
             '&': '&amp;',
@@ -520,6 +566,7 @@
             document.body.appendChild(container);
             startDuplicateShopWatcher();
             autoBackupScrapedShops();
+            autoSyncGitHubBackupDaily();
             return;
         }
         setTimeout(appendPanelWhenReady, 100);
@@ -1101,7 +1148,7 @@
                 </div>
                 <div style="display:flex; gap:8px; margin-top:8px;">
                     <button id="github-clear-token" style="padding:7px 10px; background:#fff; color:#b42318; border:1px solid #f3b3ad; border-radius:4px; cursor:pointer;">清空Token</button>
-                    <div id="github-sync-status" style="flex:1; min-height:18px; color:#666; font-size:12px; line-height:1.4;">Token 只保存在脚本猫本地，不会写进脚本代码。</div>
+                    <div id="github-sync-status" style="flex:1; min-height:18px; color:#666; font-size:12px; line-height:1.4;">Token 只保存在脚本猫本地；保存后每天最多自动合并同步一次。</div>
                 </div>
             </div>
             <div style="display:flex; gap:10px; margin-top:18px;">
@@ -1174,6 +1221,7 @@
                 textarea.value = savedList.join('\n');
                 updateModalCount();
                 updateStatusText(`已上传 GitHub 备份\n共 ${savedList.length} 个`);
+                markGitHubAutoSyncTime();
                 setGitHubStatus(`上传完成，共 ${savedList.length} 个`);
             } catch (error) {
                 setGitHubStatus(error.message || '上传失败', true);
@@ -1200,18 +1248,12 @@
             try {
                 const config = readModalGitHubConfig();
                 setGitHubStatus('正在合并本地和 GitHub 记录...');
-                let remoteList = [];
-                try {
-                    remoteList = await downloadShopListFromGitHub(config);
-                } catch (error) {
-                    if (!String(error.message || '').includes('还没有备份文件')) throw error;
-                }
-                const mergedList = normalizeShopList(readShopListFromText(textarea.value).concat(remoteList));
-                const savedList = await uploadShopListToGitHub(config, mergedList);
+                const savedList = await mergeShopListWithGitHub(config, readShopListFromText(textarea.value));
                 GM_setValue(STORAGE_KEY, savedList);
                 textarea.value = savedList.join('\n');
                 updateModalCount();
                 updateStatusText(`已合并同步 GitHub\n共 ${savedList.length} 个`);
+                markGitHubAutoSyncTime();
                 setGitHubStatus(`合并同步完成，本地和 GitHub 共 ${savedList.length} 个`);
             } catch (error) {
                 setGitHubStatus(error.message || '合并同步失败', true);
