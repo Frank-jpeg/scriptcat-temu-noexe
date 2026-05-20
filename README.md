@@ -9,6 +9,7 @@ TEMU ScriptCat 自改版脚本，去掉本地下载器依赖，并支持 GitHub 
 - 3 增加库存: https://raw.githubusercontent.com/jianpanlan0-svg/scriptcat-temu-noexe/main/temu-life-3-stock.user.js
 - 4 确认商品信息: https://raw.githubusercontent.com/jianpanlan0-svg/scriptcat-temu-noexe/main/temu-life-4-confirm.user.js
 - TEMU商品信息抓取下载: https://raw.githubusercontent.com/jianpanlan0-svg/scriptcat-temu-noexe/main/TEMU%E5%95%86%E5%93%81%E4%BF%A1%E6%81%AF%E6%8A%93%E5%8F%96%E4%B8%8B%E8%BD%BD.user.js
+- TEMU单店巡查脚本: https://raw.githubusercontent.com/jianpanlan0-svg/scriptcat-temu-noexe/main/TEMU%E5%8D%95%E5%BA%97%E5%B7%A1%E6%9F%A5%E8%84%9A%E6%9C%AC.user.js
 
 以后修改脚本时提高 `@version` 并推送到 GitHub，ScriptCat 的“检查更新”即可更新。
 ## 配置说明
