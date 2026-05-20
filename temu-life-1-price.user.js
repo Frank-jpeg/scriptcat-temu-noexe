@@ -4,7 +4,7 @@
 // @description  提交核价（自改版，无需下载器EXE，带可视化配置、接口日志和业务明细）
 // @author       TonyTonyYang
 // @match        https://agentseller.temu.com/newon/product-select*
-// @version      2026.0518.13
+// @version      2026.0520.1
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
@@ -192,6 +192,8 @@ function ensureNoExeConfigButton() {
             group: "normal",
             search: "",
             importText: "",
+            copiedSpec: null,
+            generator: { maxPrice: "", minPrice: "", rounds: "" },
             status: "未修改"
         }
     };
@@ -297,6 +299,26 @@ function ensureNoExeConfigButton() {
                 gap: 10px;
                 margin-bottom: 12px;
             }
+            .noexe-generator {
+                margin-bottom: 12px;
+                padding: 12px;
+                border: 1px solid #e5e7eb;
+                border-radius: 8px;
+                background: #fff;
+            }
+            .noexe-generator-title {
+                margin-bottom: 8px;
+                color: #374151;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            .noexe-generator-row {
+                display: grid;
+                grid-template-columns: repeat(3, minmax(120px, 1fr)) auto auto;
+                gap: 10px;
+                align-items: end;
+            }
+            .noexe-generator-row label { min-width: 0; }
             .noexe-btn {
                 background: #111827;
                 border-color: #111827;
@@ -391,6 +413,12 @@ function ensureNoExeConfigButton() {
                 align-items: center;
                 margin-bottom: 10px;
             }
+            .noexe-card-actions {
+                display: flex;
+                flex-wrap: wrap;
+                justify-content: flex-end;
+                gap: 6px;
+            }
             .noexe-price-list {
                 display: grid;
                 grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
@@ -414,6 +442,16 @@ function ensureNoExeConfigButton() {
                 background: #fff;
                 color: #374151;
                 cursor: pointer;
+            }
+            .noexe-mini.text {
+                min-width: 58px;
+                padding: 0 9px;
+                font: 600 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+            }
+            .noexe-mini.primary {
+                background: #fff3eb;
+                border-color: #ff6a00;
+                color: #c2410c;
             }
             .noexe-empty {
                 padding: 28px;
@@ -527,6 +565,7 @@ function ensureNoExeConfigButton() {
             @media (max-width: 640px) {
                 .noexe-panel { width: 100vw; }
                 .noexe-body { padding: 12px; }
+                .noexe-generator-row { grid-template-columns: 1fr; }
                 .noexe-table { min-width: 680px; }
                 .noexe-table-wrap { overflow-x: auto; }
             }
@@ -668,6 +707,7 @@ function renderNoExePrices(config) {
     const state = noExeUiContext.state;
     const groupKey = state.group || "normal";
     const group = config.priceReviewConfig[groupKey] || {};
+    const generator = getNoExeGeneratorState();
     const search = (state.search || "").trim().toLowerCase();
     const entries = Object.entries(group).filter(function(entry) {
         return !search || entry[0].toLowerCase().indexOf(search) >= 0;
@@ -679,6 +719,7 @@ function renderNoExePrices(config) {
                 return `<button class="noexe-segment ${groupKey === groupInfo.key ? "is-active" : ""}" type="button" data-action="switch-group" data-group="${groupInfo.key}">${groupInfo.label}</button>`;
             }).join("")}
             <button class="noexe-btn" type="button" data-action="add-spec">新增规格</button>
+            <button class="noexe-btn secondary" type="button" data-action="paste-spec">粘贴规格</button>
         </div>
         <div class="noexe-toolbar">
             <label style="width:170px;">
@@ -690,6 +731,26 @@ function renderNoExePrices(config) {
                 <input class="noexe-input" data-input="price-search" value="${escapeNoExeAttr(state.search || "")}" placeholder="输入颜色、尺码或关键词">
             </label>
             <span class="noexe-note">报价单位：分；每个数字是一轮报价。</span>
+        </div>
+        <div class="noexe-generator">
+            <div class="noexe-generator-title">自动生成阶梯价</div>
+            <div class="noexe-generator-row">
+                <label>
+                    <span class="noexe-note">最大价（第 1 轮，分）</span>
+                    <input class="noexe-input" type="number" min="1" step="1" data-input="generator-max" value="${escapeNoExeAttr(generator.maxPrice)}" placeholder="如 1350">
+                </label>
+                <label>
+                    <span class="noexe-note">最小价（最后一轮，分）</span>
+                    <input class="noexe-input" type="number" min="1" step="1" data-input="generator-min" value="${escapeNoExeAttr(generator.minPrice)}" placeholder="如 1000">
+                </label>
+                <label>
+                    <span class="noexe-note">轮次</span>
+                    <input class="noexe-input" type="number" min="1" step="1" data-input="generator-rounds" value="${escapeNoExeAttr(generator.rounds)}" placeholder="如 8">
+                </label>
+                <button class="noexe-btn" type="button" data-action="add-spec-generated">按生成新增</button>
+                <button class="noexe-btn secondary" type="button" data-action="apply-generator-visible">生成到当前显示规格</button>
+            </div>
+            <div class="noexe-note" style="margin-top:8px;">会从最大价均匀递减到最小价；有搜索时，“当前显示规格”只覆盖搜索结果。</div>
         </div>
         ${entries.length ? `<div class="noexe-grid">${entries.map(function(entry) {
             return renderNoExeSpecCard(entry[0], entry[1]);
@@ -713,11 +774,16 @@ function renderNoExeSpecCard(specName, prices) {
         <article class="noexe-card">
             <div class="noexe-card-head">
                 <input class="noexe-input" data-change="spec-name" data-key="${key}" value="${escapeNoExeAttr(specName)}" placeholder="规格名">
-                <button class="noexe-danger-btn" type="button" data-action="delete-spec" data-key="${key}">删除</button>
+                <div class="noexe-card-actions">
+                    <button class="noexe-mini text" type="button" data-action="copy-spec" data-key="${key}">复制</button>
+                    <button class="noexe-mini text" type="button" data-action="duplicate-spec" data-key="${key}">复制新增</button>
+                    <button class="noexe-danger-btn" type="button" data-action="delete-spec" data-key="${key}">删除</button>
+                </div>
             </div>
             <div class="noexe-price-list">
                 ${priceInputs}
-                <button class="noexe-mini" type="button" data-action="add-price" data-key="${key}">+ 一轮</button>
+                <button class="noexe-mini text primary" type="button" data-action="generate-spec" data-key="${key}">自动生成</button>
+                <button class="noexe-mini text" type="button" data-action="add-price" data-key="${key}">+ 一轮</button>
             </div>
         </article>
     `;
@@ -795,11 +861,82 @@ async function noExeHandleClick(event) {
         await saveNoExeConfig(config);
         return;
     }
+    if (action === "add-spec-generated") {
+        const prices = buildNoExeGeneratedPricesFromUi();
+        if (!prices) return;
+        const group = config.priceReviewConfig[noExeUiContext.state.group] || {};
+        const name = getNoExeUniqueSpecName(group, "新规格");
+        group[name] = prices;
+        config.priceReviewConfig[noExeUiContext.state.group] = group;
+        noExeUiContext.state.search = "";
+        await saveNoExeConfig(config);
+        return;
+    }
+    if (action === "copy-spec") {
+        const group = config.priceReviewConfig[noExeUiContext.state.group] || {};
+        const key = decodeURIComponent(button.dataset.key);
+        if (!Array.isArray(group[key])) return;
+        const payload = buildNoExeSpecPayload(key, group[key]);
+        noExeUiContext.state.copiedSpec = payload;
+        await copyNoExeText(JSON.stringify(payload, null, 2));
+        noExeUiContext.state.status = "已复制规格：" + key;
+        noExeSetStatus(noExeUiContext.state.status);
+        return;
+    }
+    if (action === "duplicate-spec") {
+        const group = config.priceReviewConfig[noExeUiContext.state.group] || {};
+        const key = decodeURIComponent(button.dataset.key);
+        if (!Array.isArray(group[key])) return;
+        const copied = buildNoExeSpecPayload(key, group[key]);
+        const newName = getNoExeUniqueSpecName(group, key + "-复制");
+        group[newName] = cloneNoExe(copied.prices);
+        config.priceReviewConfig[noExeUiContext.state.group] = group;
+        noExeUiContext.state.search = "";
+        await saveNoExeConfig(config);
+        return;
+    }
+    if (action === "paste-spec") {
+        const payload = await readNoExeSpecPayloadFromClipboard();
+        if (!payload) {
+            alert("请先复制一个规格，再点粘贴规格");
+            return;
+        }
+        const group = config.priceReviewConfig[noExeUiContext.state.group] || {};
+        const newName = getNoExeUniqueSpecName(group, payload.specName || "粘贴规格");
+        group[newName] = cloneNoExe(payload.prices);
+        config.priceReviewConfig[noExeUiContext.state.group] = group;
+        noExeUiContext.state.search = "";
+        await saveNoExeConfig(config);
+        return;
+    }
     if (action === "delete-spec") {
         const group = config.priceReviewConfig[noExeUiContext.state.group] || {};
         const key = decodeURIComponent(button.dataset.key);
         if (!confirm("确定删除规格：" + key + "？")) return;
         delete group[key];
+        await saveNoExeConfig(config);
+        return;
+    }
+    if (action === "generate-spec") {
+        const group = config.priceReviewConfig[noExeUiContext.state.group] || {};
+        const key = decodeURIComponent(button.dataset.key);
+        if (!Array.isArray(group[key])) return;
+        const prices = buildNoExeGeneratedPricesFromUi();
+        if (!prices) return;
+        group[key] = prices;
+        await saveNoExeConfig(config);
+        return;
+    }
+    if (action === "apply-generator-visible") {
+        const prices = buildNoExeGeneratedPricesFromUi();
+        if (!prices) return;
+        const group = config.priceReviewConfig[noExeUiContext.state.group] || {};
+        const visibleKeys = getNoExeVisibleSpecKeys(group);
+        if (!visibleKeys.length) return alert("当前没有可生成的规格");
+        if (!confirm("确定覆盖当前显示的 " + visibleKeys.length + " 个规格？")) return;
+        visibleKeys.forEach(function(key) {
+            group[key] = cloneNoExe(prices);
+        });
         await saveNoExeConfig(config);
         return;
     }
@@ -850,6 +987,14 @@ function noExeHandleInput(event) {
         noExeUiContext.state.search = input.value;
         clearTimeout(noExeUiContext.searchTimer);
         noExeUiContext.searchTimer = setTimeout(noExeRenderPanel, 180);
+        return;
+    }
+    if (input.dataset.input === "generator-max" || input.dataset.input === "generator-min" || input.dataset.input === "generator-rounds") {
+        const generator = getNoExeGeneratorState();
+        if (input.dataset.input === "generator-max") generator.maxPrice = input.value;
+        if (input.dataset.input === "generator-min") generator.minPrice = input.value;
+        if (input.dataset.input === "generator-rounds") generator.rounds = input.value;
+        return;
     }
 }
 
@@ -995,6 +1140,78 @@ function getNoExeUniqueSpecName(group, baseName) {
         index += 1;
     }
     return name;
+}
+
+function getNoExeGeneratorState() {
+    if (!noExeUiContext) return { maxPrice: "", minPrice: "", rounds: "" };
+    if (!noExeUiContext.state.generator) {
+        noExeUiContext.state.generator = { maxPrice: "", minPrice: "", rounds: "" };
+    }
+    return noExeUiContext.state.generator;
+}
+
+function getNoExeVisibleSpecKeys(group) {
+    const search = (noExeUiContext && noExeUiContext.state.search ? noExeUiContext.state.search : "").trim().toLowerCase();
+    return Object.keys(group || {}).filter(function(key) {
+        return !search || key.toLowerCase().indexOf(search) >= 0;
+    });
+}
+
+function buildNoExeSpecPayload(specName, prices) {
+    return {
+        type: "noexe-price-spec-v1",
+        specName: String(specName || ""),
+        prices: Array.isArray(prices) ? prices.map(function(price) {
+            return Number(price);
+        }).filter(function(price) {
+            return Number.isFinite(price);
+        }) : []
+    };
+}
+
+function buildNoExeGeneratedPricesFromUi() {
+    const generator = getNoExeGeneratorState();
+    const maxPrice = Number(generator.maxPrice);
+    const minPrice = Number(generator.minPrice);
+    const rounds = Number(generator.rounds);
+    if (!Number.isInteger(maxPrice) || maxPrice <= 0) return alertAndReturnNoExe("请先填写大于 0 的最大价");
+    if (!Number.isInteger(minPrice) || minPrice <= 0) return alertAndReturnNoExe("请先填写大于 0 的最小价");
+    if (!Number.isInteger(rounds) || rounds <= 0) return alertAndReturnNoExe("请先填写正整数轮次");
+    if (maxPrice < minPrice) return alertAndReturnNoExe("最大价不能小于最小价");
+    const prices = [];
+    if (rounds === 1) return [maxPrice];
+    for (let index = 0; index < rounds; index += 1) {
+        if (index === 0) prices.push(maxPrice);
+        else if (index === rounds - 1) prices.push(minPrice);
+        else {
+            const value = Math.round(maxPrice - ((maxPrice - minPrice) * index / (rounds - 1)));
+            prices.push(value);
+        }
+    }
+    return prices;
+}
+
+async function readNoExeSpecPayloadFromClipboard() {
+    if (noExeUiContext && noExeUiContext.state.copiedSpec && Array.isArray(noExeUiContext.state.copiedSpec.prices)) {
+        return cloneNoExe(noExeUiContext.state.copiedSpec);
+    }
+    try {
+        if (navigator.clipboard && navigator.clipboard.readText) {
+            const text = (await navigator.clipboard.readText()).trim();
+            if (!text) return null;
+            const parsed = JSON.parse(text);
+            if (parsed && parsed.type === "noexe-price-spec-v1" && Array.isArray(parsed.prices)) return buildNoExeSpecPayload(parsed.specName, parsed.prices);
+            if (parsed && typeof parsed === "object" && Array.isArray(parsed.prices)) return buildNoExeSpecPayload(parsed.specName || "粘贴规格", parsed.prices);
+        }
+    } catch (e) {
+        noExeBusinessLog("读取剪贴板规格失败", e);
+    }
+    return null;
+}
+
+function alertAndReturnNoExe(message) {
+    alert(message);
+    return null;
 }
 
 function getNoExeDuplicateMallIds(malls) {
