@@ -4,7 +4,7 @@
 // @description  提交核价（自改版，无需下载器EXE，带可视化配置、接口日志和业务明细）
 // @author       TonyTonyYang
 // @match        https://agentseller.temu.com/newon/product-select*
-// @version      2026.0520.6
+// @version      2026.0520.7
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
@@ -14,7 +14,7 @@
 // ==/UserScript==
 
 const NOEXE_STORAGE_KEY = "goldabcd_noexe_config_v1";
-const NOEXE_UI_VERSION = "2026.0520.6";
+const NOEXE_UI_VERSION = "2026.0520.7";
 const NOEXE_DEFAULT_CONFIG = {
     "version": 1,
     "malls": [],
@@ -1850,6 +1850,7 @@ let maxTryCount = 10;
     let currentCommitIndex = 0;
 
     let batchInfoQueryBodyQList = [];
+    let noExePageSkuSpecCache = null;
 
     setTimeout(function () {
         //noExeBusinessLog("启动定时器");
@@ -1908,10 +1909,12 @@ let maxTryCount = 10;
                             //parseInt(skuInfo.priceBeforeExchange)//9800.0,单位分
                             //skuInfo.spec//黑色-M
                             let targetPrice = null;
-                            let targetPriceSet = targetPriceMap.get(skuInfo.spec);
+                            let resolvedPrice = resolveTargetPriceSet(targetPriceMap, skuInfo.productSkuId, skuInfo.spec, skuInfo.productPropertyList || skuInfo.skuPropertyList || []);
+                            let targetPriceSet = resolvedPrice.prices;
                             if (!targetPriceSet || priceReviewItem.reviewTimes > targetPriceSet.length) {
-                                noExeBusinessLog("缺少价格设置：", skuInfo.productSkuId, skuInfo.spec, "第" + priceReviewItem.reviewTimes + "次核价");
+                                logNoExeMissingPriceConfig(resolvedPrice, priceReviewItem.reviewTimes);
                             } else {
+                                logNoExeResolvedPriceConfig(resolvedPrice);
                                 for (let index = priceReviewItem.reviewTimes - 1; index < targetPriceSet.length; index++) {
                                     let referencePrice = Math.floor(targetPriceSet[index] * PriceMultiple);
 
@@ -2085,11 +2088,13 @@ let maxTryCount = 10;
 
                             let targetPrice = null;
                             let specification = getPropertyFromList(sku.productPropertyList);
-                            let targetPriceSet = targetPriceMap.get(specification);
+                            let resolvedPrice = resolveTargetPriceSet(targetPriceMap, sku.skuId, specification, sku.productPropertyList);
+                            let targetPriceSet = resolvedPrice.prices;
                             if (!targetPriceSet || supplierPriceReview.times > targetPriceSet.length) {
-                                noExeBusinessLog("缺少价格设置：", sku.skuId, specification, "第" + supplierPriceReview.times + "次核价");
+                                logNoExeMissingPriceConfig(resolvedPrice, supplierPriceReview.times);
                                 continue;
                             }
+                            logNoExeResolvedPriceConfig(resolvedPrice);
                             for (let index = supplierPriceReview.times - 1; index < targetPriceSet.length; index++) {
                                 let referencePrice = Math.floor(targetPriceSet[index] * PriceMultiple);
 
@@ -2109,7 +2114,7 @@ let maxTryCount = 10;
                             }
 
                             if (!targetPrice) {
-                                noExeBusinessLog("核价太低SKU：", sku.skuId, specification,
+                                noExeBusinessLog("核价太低SKU：", sku.skuId, resolvedPrice.matchedSpec || specification,
                                     "第" + supplierPriceReview.times + "次核价",
                                     "最后报价" + (supplierPriceReview.supplyPrice / 100) + "元",
                                     "参考报价" + (supplierPriceReview.suggestSupplyPrice / 100) + "元"
@@ -2293,22 +2298,173 @@ let maxTryCount = 10;
         }
     }
 
-    function getPropertyFromList(productPropertyList) {
-        let specification = ["", "", "", ""];
+    function resolveTargetPriceSet(targetPriceMap, skuId, rawSpec, propertyList) {
+        const availableSpecs = Array.from(targetPriceMap.keys());
+        const pageSpec = getNoExePageSpecBySkuId(skuId);
+        const propertySpec = getPropertyFromList(propertyList);
+        const candidates = [
+            { spec: rawSpec, method: "接口规格" },
+            { spec: pageSpec, method: "页面SKU属性集" },
+            { spec: propertySpec, method: "接口属性扩展" }
+        ];
 
-        for (let i = 0; i < productPropertyList.length; i++) {
-            if (productPropertyList[i].name == "颜色") {
-                specification[0] = productPropertyList[i].value;
-            } else if (productPropertyList[i].name == "型号") {
-                specification[1] = productPropertyList[i].value;
-            } else if (productPropertyList[i].name == "尺码") {
-                specification[2] = productPropertyList[i].value;
-            } else if (productPropertyList[i].name == "风格") {
-                specification[3] = productPropertyList[i].value;
+        for (let i = 0; i < candidates.length; i++) {
+            const match = findNoExeConfigSpec(targetPriceMap, candidates[i].spec, false);
+            if (match) {
+                return buildNoExePriceResolveResult(targetPriceMap, skuId, rawSpec, pageSpec, propertySpec, availableSpecs, candidates[i].method, match.key, match.ambiguous);
             }
         }
-        return specification.filter(item => item && String(item).trim()).join('-');
+
+        for (let i = 0; i < candidates.length; i++) {
+            const match = findNoExeConfigSpec(targetPriceMap, candidates[i].spec, true);
+            if (match && (!match.ambiguous || !match.ambiguous.length)) {
+                return buildNoExePriceResolveResult(targetPriceMap, skuId, rawSpec, pageSpec, propertySpec, availableSpecs, candidates[i].method + "标准化", match.key, match.ambiguous);
+            }
+            if (match && match.ambiguous && match.ambiguous.length) {
+                return buildNoExePriceResolveResult(targetPriceMap, skuId, rawSpec, pageSpec, propertySpec, availableSpecs, candidates[i].method + "不唯一", "", match.ambiguous);
+            }
+        }
+
+        return buildNoExePriceResolveResult(targetPriceMap, skuId, rawSpec, pageSpec, propertySpec, availableSpecs, "未匹配", "", []);
     }
+
+    function buildNoExePriceResolveResult(targetPriceMap, skuId, rawSpec, pageSpec, propertySpec, availableSpecs, method, matchedSpec, ambiguous) {
+        return {
+            skuId: skuId,
+            rawSpec: normalizeNoExeLogValue(rawSpec),
+            pageSpec: normalizeNoExeLogValue(pageSpec),
+            propertySpec: normalizeNoExeLogValue(propertySpec),
+            method: method,
+            matchedSpec: matchedSpec || "",
+            prices: matchedSpec ? targetPriceMap.get(matchedSpec) : null,
+            availableSpecs: availableSpecs,
+            ambiguousSpecs: ambiguous || []
+        };
+    }
+
+    function findNoExeConfigSpec(targetPriceMap, spec, allowUniquePrefix) {
+        const text = normalizeNoExeLogValue(spec);
+        if (!text) return null;
+        if (targetPriceMap.has(text)) return { key: text, ambiguous: [] };
+
+        const normalized = normalizeNoExeSpecKey(text);
+        if (!normalized) return null;
+
+        const exactMatches = Array.from(targetPriceMap.keys()).filter(function(key) {
+            return normalizeNoExeSpecKey(key) === normalized;
+        });
+        if (exactMatches.length === 1) return { key: exactMatches[0], ambiguous: [] };
+        if (exactMatches.length > 1) return { key: "", ambiguous: exactMatches };
+
+        if (!allowUniquePrefix) return null;
+
+        const prefixMatches = Array.from(targetPriceMap.keys()).filter(function(key) {
+            const keyParts = normalizeNoExeSpecKey(key).split("-");
+            return keyParts.length > 1 && keyParts[0] === normalized;
+        });
+        if (prefixMatches.length === 1) return { key: prefixMatches[0], ambiguous: [] };
+        if (prefixMatches.length > 1) return { key: "", ambiguous: prefixMatches };
+        return null;
+    }
+
+    function logNoExeResolvedPriceConfig(resolveInfo) {
+        if (!resolveInfo || !resolveInfo.prices || resolveInfo.method === "接口规格") return;
+        noExeBusinessLog("规格补全匹配：", resolveInfo.skuId, "接口规格=" + (resolveInfo.rawSpec || "空"), "页面规格=" + (resolveInfo.pageSpec || "空"), "匹配配置=" + resolveInfo.matchedSpec, "方式=" + resolveInfo.method);
+    }
+
+    function logNoExeMissingPriceConfig(resolveInfo, reviewTimes) {
+        const available = (resolveInfo.availableSpecs || []).slice(0, 30).join(" / ");
+        const ambiguous = (resolveInfo.ambiguousSpecs || []).join(" / ");
+        noExeBusinessLog(
+            "缺少价格设置：",
+            resolveInfo.skuId,
+            "接口规格=" + (resolveInfo.rawSpec || "空"),
+            "页面规格=" + (resolveInfo.pageSpec || "空"),
+            "属性规格=" + (resolveInfo.propertySpec || "空"),
+            "第" + reviewTimes + "次核价",
+            ambiguous ? "不唯一=" + ambiguous : "",
+            available ? "可用规格=" + available : "可用规格=空"
+        );
+    }
+
+    function getNoExePageSpecBySkuId(skuId) {
+        const id = normalizeNoExeLogValue(skuId);
+        if (!id) return "";
+        if (!noExePageSkuSpecCache) noExePageSkuSpecCache = buildNoExePageSkuSpecCache();
+        if (!noExePageSkuSpecCache.has(id)) noExePageSkuSpecCache = buildNoExePageSkuSpecCache();
+        return noExePageSkuSpecCache.get(id) || "";
+    }
+
+    function buildNoExePageSkuSpecCache() {
+        const cache = new Map();
+        const text = document.body && document.body.innerText ? document.body.innerText : "";
+        const lines = text.split(/\r?\n/).map(function(line) {
+            return line.trim();
+        }).filter(Boolean);
+
+        for (let i = 0; i < lines.length; i++) {
+            const ids = lines[i].match(/\b\d{8,}\b/g);
+            if (!ids || /^货号[:：]/.test(lines[i])) continue;
+            for (let idIndex = 0; idIndex < ids.length; idIndex++) {
+                const spec = findNoExeNextPageSpecLine(lines, i + 1);
+                if (spec && !cache.has(ids[idIndex])) cache.set(ids[idIndex], spec);
+            }
+        }
+        return cache;
+    }
+
+    function findNoExeNextPageSpecLine(lines, startIndex) {
+        for (let i = startIndex; i < Math.min(lines.length, startIndex + 5); i++) {
+            const line = lines[i];
+            if (!line) continue;
+            if (/^\d{8,}$/.test(line)) continue;
+            if (/^货号[:：]/.test(line)) continue;
+            if (/SKU属性集|商品信息|审版|价格|收起|展开|复制/.test(line)) continue;
+            if (line.length > 80) continue;
+            if (!isNoExePageSpecLine(line)) continue;
+            return line;
+        }
+        return "";
+    }
+
+    function isNoExePageSpecLine(line) {
+        return /[-－—–]/.test(line) || /\d+(?:\.\d+)?\s*(ml|毫升|l|升|g|克|kg|千克|cm|厘米|mm|毫米|oz|pcs?|件|个|只|套)/i.test(line);
+    }
+
+    function getPropertyFromList(productPropertyList) {
+        productPropertyList = Array.isArray(productPropertyList) ? productPropertyList : [];
+        const orderedNames = ["颜色", "Color", "Colour", "容量", "净含量", "含量", "规格", "型号", "尺寸", "尺码", "Size", "风格", "款式", "Style"];
+        const parts = [];
+
+        orderedNames.forEach(function(name) {
+            for (let i = 0; i < productPropertyList.length; i++) {
+                const item = productPropertyList[i] || {};
+                if (String(item.name || "").toLowerCase() === String(name).toLowerCase()) {
+                    pushNoExeSpecPart(parts, item.value);
+                }
+            }
+        });
+
+        return parts.join("-");
+    }
+
+    function pushNoExeSpecPart(parts, value) {
+        const text = normalizeNoExeLogValue(value);
+        if (text && parts.indexOf(text) < 0) parts.push(text);
+    }
+
+    function normalizeNoExeSpecKey(value) {
+        return normalizeNoExeLogValue(value)
+            .replace(/[－—–]/g, "-")
+            .replace(/\s*-\s*/g, "-")
+            .replace(/\s+/g, "")
+            .toLowerCase();
+    }
+
+    function normalizeNoExeLogValue(value) {
+        return String(value === undefined || value === null ? "" : value).trim();
+    }
+
     function getBrandName(productPropertyList) {
         for (let i = 0; i < productPropertyList.length; i++) {
             if (productPropertyList[i].name == "品牌名") {
