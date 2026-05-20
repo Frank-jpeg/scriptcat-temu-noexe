@@ -4,7 +4,7 @@
 // @description  提交核价（自改版，无需下载器EXE，带可视化配置、接口日志和业务明细）
 // @author       TonyTonyYang
 // @match        https://agentseller.temu.com/newon/product-select*
-// @version      2026.0520.5
+// @version      2026.0520.6
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
@@ -14,7 +14,7 @@
 // ==/UserScript==
 
 const NOEXE_STORAGE_KEY = "goldabcd_noexe_config_v1";
-const NOEXE_UI_VERSION = "2026.0520.5";
+const NOEXE_UI_VERSION = "2026.0520.6";
 const NOEXE_DEFAULT_CONFIG = {
     "version": 1,
     "malls": [],
@@ -237,10 +237,19 @@ function ensureNoExeConfigButton() {
                 right: 0;
                 width: min(920px, calc(100vw - 28px));
                 height: 100vh;
+                max-height: 100vh;
                 background: #fff;
                 box-shadow: -12px 0 34px rgba(15,23,42,.22);
                 display: flex;
                 flex-direction: column;
+                overflow: hidden;
+            }
+            .noexe-panel-content, .noexe-log-content {
+                display: flex;
+                flex: 1;
+                flex-direction: column;
+                min-height: 0;
+                height: 100%;
             }
             .noexe-head {
                 display: flex;
@@ -284,6 +293,7 @@ function ensureNoExeConfigButton() {
             }
             .noexe-body {
                 flex: 1;
+                min-height: 0;
                 overflow: auto;
                 padding: 16px 18px 18px;
                 background: #f8fafc;
