@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Temu 商品信息抓取下载 GitHub更新版
 // @namespace    https://bbs.tampermonkey.net.cn/
-// @version      4.29.1
+// @version      4.29.2
 // @description  批量抓取 Temu 商品（支持多币种价格/销量筛选、生成销量TXT统计、中文/英文销量识别、JPG/PNG可选、原始字节下载、自动跳过推荐区、并发下载、自定义间隔）
 // @author       Gemini
 // @match        https://www.temu.com/*
@@ -12,6 +12,7 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @connect      *
+// @connect      api.github.com
 // @downloadURL  https://raw.githubusercontent.com/jianpanlan0-svg/scriptcat-temu-noexe/main/TEMU%E5%95%86%E5%93%81%E4%BF%A1%E6%81%AF%E6%8A%93%E5%8F%96%E4%B8%8B%E8%BD%BD.user.js
 // @updateURL    https://raw.githubusercontent.com/jianpanlan0-svg/scriptcat-temu-noexe/main/TEMU%E5%95%86%E5%93%81%E4%BF%A1%E6%81%AF%E6%8A%93%E5%8F%96%E4%B8%8B%E8%BD%BD.user.js
 // ==/UserScript==
@@ -19,11 +20,20 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '4.29.1';
+    const SCRIPT_VERSION = '4.29.2';
     const STORAGE_KEY = 'TEMU_SCRAPED_SHOPS_STORAGE';
     const IMAGE_FORMAT_KEY = 'TEMU_IMAGE_FORMAT';
     const BACKUP_TIME_KEY = 'TEMU_SCRAPED_SHOPS_LAST_BACKUP_TIME';
     const BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+    const GITHUB_SYNC_CONFIG_KEY = 'TEMU_SCRAPED_SHOPS_GITHUB_SYNC_CONFIG';
+    const GITHUB_API_VERSION = '2022-11-28';
+    const DEFAULT_GITHUB_SYNC_CONFIG = {
+        owner: 'jianpanlan0-svg',
+        repo: 'scriptcat-temu-backup-data',
+        branch: 'main',
+        path: 'temu-scraped-shops.json',
+        token: ''
+    };
 
     // 获取店铺名称
     function getShopName() {
@@ -91,6 +101,19 @@
         return Array.isArray(data) ? data : [];
     }
 
+    function normalizeShopList(list) {
+        const seen = new Set();
+        return (Array.isArray(list) ? list : [])
+            .map(name => String(name || '').trim())
+            .filter(Boolean)
+            .filter(name => {
+                const key = normalizeShopNameForCompare(name);
+                if (!key || seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
+    }
+
     function normalizeShopNameForCompare(name) {
         return String(name || '').replace(/\s+/g, ' ').trim().toLowerCase();
     }
@@ -151,6 +174,160 @@
         if (Date.now() - lastBackupTime >= BACKUP_INTERVAL_MS) {
             backupScrapedShopsToLocal(false);
         }
+    }
+
+    function normalizeGitHubSyncConfig(config) {
+        const source = config && typeof config === 'object' ? config : {};
+        const next = Object.assign({}, DEFAULT_GITHUB_SYNC_CONFIG, source);
+        next.owner = String(next.owner || '').trim() || DEFAULT_GITHUB_SYNC_CONFIG.owner;
+        next.repo = String(next.repo || '').trim() || DEFAULT_GITHUB_SYNC_CONFIG.repo;
+        next.branch = String(next.branch || '').trim() || DEFAULT_GITHUB_SYNC_CONFIG.branch;
+        next.path = String(next.path || '').trim().replace(/^\/+/, '') || DEFAULT_GITHUB_SYNC_CONFIG.path;
+        next.token = String(next.token || '').trim();
+        return next;
+    }
+
+    function getGitHubSyncConfig() {
+        return normalizeGitHubSyncConfig(GM_getValue(GITHUB_SYNC_CONFIG_KEY, {}));
+    }
+
+    function saveGitHubSyncConfig(config) {
+        const next = normalizeGitHubSyncConfig(config);
+        GM_setValue(GITHUB_SYNC_CONFIG_KEY, next);
+        return next;
+    }
+
+    function readShopListFromText(text) {
+        return normalizeShopList(String(text || '').split(/\r?\n/));
+    }
+
+    function buildGitHubBackupContent(list) {
+        const shops = normalizeShopList(list);
+        return JSON.stringify({
+            version: 1,
+            source: 'TEMU商品信息抓取下载',
+            updatedAt: new Date().toISOString(),
+            count: shops.length,
+            shops
+        }, null, 2);
+    }
+
+    function parseGitHubBackupContent(text) {
+        const rawText = String(text || '').trim();
+        if (!rawText) return [];
+        try {
+            const data = JSON.parse(rawText);
+            if (Array.isArray(data)) return normalizeShopList(data);
+            if (data && Array.isArray(data.shops)) return normalizeShopList(data.shops);
+        } catch (error) {
+            // 兼容旧 TXT 备份格式：一行一个店铺名。
+        }
+        return readShopListFromText(rawText);
+    }
+
+    function encodeGitHubPath(path) {
+        return String(path || '').split('/').filter(Boolean).map(encodeURIComponent).join('/');
+    }
+
+    function getGitHubContentUrl(config) {
+        const encodedPath = encodeGitHubPath(config.path);
+        return `https://api.github.com/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/contents/${encodedPath}`;
+    }
+
+    function utf8ToBase64(text) {
+        const bytes = new TextEncoder().encode(String(text || ''));
+        let binary = '';
+        bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+        return btoa(binary);
+    }
+
+    function base64ToUtf8(base64) {
+        const binary = atob(String(base64 || '').replace(/\s/g, ''));
+        const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
+        return new TextDecoder('utf-8').decode(bytes);
+    }
+
+    function getGitHubErrorText(response, data) {
+        const message = data && data.message ? data.message : 'GitHub 请求失败';
+        return `${message}${response && response.status ? ` (${response.status})` : ''}`;
+    }
+
+    function githubApiRequest(method, url, token, body) {
+        return new Promise((resolve, reject) => {
+            const headers = {
+                Accept: 'application/vnd.github+json',
+                Authorization: `Bearer ${token}`,
+                'X-GitHub-Api-Version': GITHUB_API_VERSION
+            };
+            if (body) headers['Content-Type'] = 'application/json';
+
+            GM_xmlhttpRequest({
+                method,
+                url,
+                headers,
+                data: body ? JSON.stringify(body) : undefined,
+                responseType: 'json',
+                timeout: 45000,
+                onload: (response) => {
+                    let data = response.response;
+                    if (!data && response.responseText) {
+                        try { data = JSON.parse(response.responseText); } catch (error) { data = null; }
+                    }
+                    if (response.status >= 200 && response.status < 300) {
+                        resolve({ status: response.status, data });
+                        return;
+                    }
+                    const error = new Error(getGitHubErrorText(response, data));
+                    error.status = response.status;
+                    error.data = data;
+                    reject(error);
+                },
+                onerror: (error) => reject(new Error(getDownloadErrorText(error))),
+                ontimeout: () => reject(new Error('GitHub 请求超时'))
+            });
+        });
+    }
+
+    async function getGitHubBackupFile(config) {
+        const url = `${getGitHubContentUrl(config)}?ref=${encodeURIComponent(config.branch)}`;
+        try {
+            const result = await githubApiRequest('GET', url, config.token);
+            return result.data || null;
+        } catch (error) {
+            if (error.status === 404) return null;
+            throw error;
+        }
+    }
+
+    async function uploadShopListToGitHub(config, list) {
+        if (!config.token) throw new Error('请先填写 GitHub Token');
+        const shops = normalizeShopList(list);
+        const oldFile = await getGitHubBackupFile(config);
+        const body = {
+            message: `Update TEMU scraped shops backup (${shops.length})`,
+            content: utf8ToBase64(buildGitHubBackupContent(shops)),
+            branch: config.branch
+        };
+        if (oldFile && oldFile.sha) body.sha = oldFile.sha;
+        await githubApiRequest('PUT', getGitHubContentUrl(config), config.token, body);
+        return shops;
+    }
+
+    async function downloadShopListFromGitHub(config) {
+        if (!config.token) throw new Error('请先填写 GitHub Token');
+        const file = await getGitHubBackupFile(config);
+        if (!file || !file.content) throw new Error('GitHub 上还没有备份文件');
+        return parseGitHubBackupContent(base64ToUtf8(file.content));
+    }
+
+    function escapeHtml(value) {
+        return String(value == null ? '' : value).replace(/[&<>"']/g, char => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;'
+        }[char]));
     }
 
     // 记录新店铺
@@ -887,25 +1064,159 @@
     // --- 弹窗逻辑 (精简) ---
     function showListModal() {
         const list = getScrapedShops();
+        const githubConfig = getGitHubSyncConfig();
         const modal = document.createElement('div');
         modal.style.cssText = `position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 10002; display: flex; align-items: center; justify-content: center;`;
         const dialog = document.createElement('div');
-        dialog.style.cssText = `background: #fff; padding: 25px; border-radius: 12px; width: 420px; box-shadow: 0 10px 40px rgba(0,0,0,0.3); position: relative; font-family: sans-serif;`;
+        dialog.style.cssText = `background: #fff; padding: 25px; border-radius: 12px; width: 560px; max-height: 90vh; overflow:auto; box-shadow: 0 10px 40px rgba(0,0,0,0.3); position: relative; font-family: sans-serif;`;
         const plainTextContent = list.join('\n');
-        dialog.innerHTML = `<h3 style="margin-top:0; color:#fb7701; border-bottom:2px solid #fb7701; padding-bottom:10px; display:flex; justify-content:space-between; align-items:center;"><span>已抓取清单 (${list.length})</span><span id="modal-close-x" style="cursor:pointer; color:#999; font-size:24px;">&times;</span></h3><textarea id="config-text" style="width:100%; height:220px; border:1px solid #ddd; border-radius:6px; padding:10px; font-size:13px; line-height:1.5;">${plainTextContent}</textarea><div style="display:flex; gap:8px; margin-top:10px;"><button id="copy-config" style="flex:1; padding:8px; background:#4CAF50; color:white; border:none; border-radius:4px; cursor:pointer;">全部复制</button><button id="import-config" style="flex:1; padding:8px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer;">保存导入</button></div><div style="display:flex; gap:10px; margin-top:25px;"><button id="modal-clear" style="flex:1; padding:10px; border:1px solid #ff4d4f; color:#ff4d4f; background:#fff; border-radius:4px; cursor:pointer;">清空记录</button><button id="modal-close" style="flex:1; padding:10px; border:none; background:#fb7701; color:#fff; border-radius:4px; cursor:pointer; font-weight:bold;">完成</button></div>`;
+        const tokenPlaceholder = githubConfig.token ? '已保存，留空则沿用' : '粘贴 GitHub Token';
+        dialog.innerHTML = `
+            <h3 style="margin-top:0; color:#fb7701; border-bottom:2px solid #fb7701; padding-bottom:10px; display:flex; justify-content:space-between; align-items:center;">
+                <span>已抓取清单 (<span id="shop-count">${list.length}</span>)</span>
+                <span id="modal-close-x" style="cursor:pointer; color:#999; font-size:24px;">&times;</span>
+            </h3>
+            <textarea id="config-text" style="width:100%; height:200px; border:1px solid #ddd; border-radius:6px; padding:10px; font-size:13px; line-height:1.5;">${escapeHtml(plainTextContent)}</textarea>
+            <div style="display:flex; gap:8px; margin-top:10px;">
+                <button id="copy-config" style="flex:1; padding:8px; background:#4CAF50; color:white; border:none; border-radius:4px; cursor:pointer;">全部复制</button>
+                <button id="import-config" style="flex:1; padding:8px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer;">保存导入</button>
+                <button id="backup-config" style="flex:1; padding:8px; background:#fb7701; color:white; border:none; border-radius:4px; cursor:pointer;">下载备份TXT</button>
+            </div>
+            <div style="margin-top:16px; padding:12px; border:1px solid #e5e7eb; border-radius:8px; background:#fafafa;">
+                <div style="font-weight:bold; color:#333; margin-bottom:8px;">GitHub 私有备份</div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:12px;">
+                    <label>Owner<input id="github-owner" value="${escapeHtml(githubConfig.owner)}" style="box-sizing:border-box; width:100%; margin-top:4px; padding:6px; border:1px solid #ddd; border-radius:4px;"></label>
+                    <label>Repo<input id="github-repo" value="${escapeHtml(githubConfig.repo)}" style="box-sizing:border-box; width:100%; margin-top:4px; padding:6px; border:1px solid #ddd; border-radius:4px;"></label>
+                    <label>Branch<input id="github-branch" value="${escapeHtml(githubConfig.branch)}" style="box-sizing:border-box; width:100%; margin-top:4px; padding:6px; border:1px solid #ddd; border-radius:4px;"></label>
+                    <label>文件路径<input id="github-path" value="${escapeHtml(githubConfig.path)}" style="box-sizing:border-box; width:100%; margin-top:4px; padding:6px; border:1px solid #ddd; border-radius:4px;"></label>
+                </div>
+                <label style="display:block; margin-top:8px; font-size:12px;">Token
+                    <input id="github-token" type="password" placeholder="${escapeHtml(tokenPlaceholder)}" style="box-sizing:border-box; width:100%; margin-top:4px; padding:6px; border:1px solid #ddd; border-radius:4px;">
+                </label>
+                <div style="display:flex; gap:8px; margin-top:10px;">
+                    <button id="github-save" style="flex:1; padding:8px; background:#6b7280; color:white; border:none; border-radius:4px; cursor:pointer;">保存设置</button>
+                    <button id="github-upload" style="flex:1; padding:8px; background:#24292f; color:white; border:none; border-radius:4px; cursor:pointer;">上传到GitHub</button>
+                    <button id="github-download" style="flex:1; padding:8px; background:#0969da; color:white; border:none; border-radius:4px; cursor:pointer;">从GitHub恢复</button>
+                    <button id="github-merge" style="flex:1; padding:8px; background:#8250df; color:white; border:none; border-radius:4px; cursor:pointer;">合并同步</button>
+                </div>
+                <div style="display:flex; gap:8px; margin-top:8px;">
+                    <button id="github-clear-token" style="padding:7px 10px; background:#fff; color:#b42318; border:1px solid #f3b3ad; border-radius:4px; cursor:pointer;">清空Token</button>
+                    <div id="github-sync-status" style="flex:1; min-height:18px; color:#666; font-size:12px; line-height:1.4;">Token 只保存在脚本猫本地，不会写进脚本代码。</div>
+                </div>
+            </div>
+            <div style="display:flex; gap:10px; margin-top:18px;">
+                <button id="modal-clear" style="flex:1; padding:10px; border:1px solid #ff4d4f; color:#ff4d4f; background:#fff; border-radius:4px; cursor:pointer;">清空记录</button>
+                <button id="modal-close" style="flex:1; padding:10px; border:none; background:#fb7701; color:#fff; border-radius:4px; cursor:pointer; font-weight:bold;">完成</button>
+            </div>`;
         modal.appendChild(dialog); document.body.appendChild(modal);
         const textarea = document.getElementById('config-text');
-        const backupBtn = document.createElement('button');
-        backupBtn.id = 'backup-config';
-        backupBtn.innerText = '下载备份TXT';
-        backupBtn.style.cssText = 'flex:1; padding:8px; background:#fb7701; color:white; border:none; border-radius:4px; cursor:pointer;';
-        document.getElementById('copy-config').parentElement.appendChild(backupBtn);
+
+        const setGitHubStatus = (message, isError = false) => {
+            const statusEl = document.getElementById('github-sync-status');
+            if (!statusEl) return;
+            statusEl.style.color = isError ? '#b42318' : '#067647';
+            statusEl.textContent = message;
+        };
+
+        const updateModalCount = () => {
+            const countEl = document.getElementById('shop-count');
+            if (countEl) countEl.textContent = String(readShopListFromText(textarea.value).length);
+        };
+
+        const readModalGitHubConfig = () => {
+            const oldConfig = getGitHubSyncConfig();
+            const tokenValue = document.getElementById('github-token').value.trim();
+            return saveGitHubSyncConfig({
+                owner: document.getElementById('github-owner').value,
+                repo: document.getElementById('github-repo').value,
+                branch: document.getElementById('github-branch').value,
+                path: document.getElementById('github-path').value,
+                token: tokenValue || oldConfig.token
+            });
+        };
+
+        textarea.addEventListener('input', updateModalCount);
         document.getElementById('modal-close').onclick = () => document.body.removeChild(modal);
         document.getElementById('modal-close-x').onclick = () => document.body.removeChild(modal);
         document.getElementById('copy-config').onclick = () => { textarea.select(); document.execCommand('copy'); alert('复制成功'); };
         document.getElementById('backup-config').onclick = () => backupScrapedShopsToLocal(true);
-        document.getElementById('import-config').onclick = () => { const newList = textarea.value.split('\n').map(s => s.trim()).filter(s => s !== ""); GM_setValue(STORAGE_KEY, newList); location.reload(); };
+        document.getElementById('import-config').onclick = () => {
+            const newList = readShopListFromText(textarea.value);
+            GM_setValue(STORAGE_KEY, newList);
+            textarea.value = newList.join('\n');
+            updateModalCount();
+            updateStatusText(`已保存已抓店铺\n共 ${newList.length} 个`);
+            setGitHubStatus(`已保存到本地，共 ${newList.length} 个`);
+        };
         document.getElementById('modal-clear').onclick = () => { if (confirm('确定要清空吗？')) { GM_setValue(STORAGE_KEY, []); location.reload(); }};
+
+        document.getElementById('github-save').onclick = () => {
+            const config = readModalGitHubConfig();
+            setGitHubStatus(config.token ? 'GitHub 设置已保存，Token 已本地保存' : 'GitHub 设置已保存，Token 为空');
+        };
+
+        document.getElementById('github-clear-token').onclick = () => {
+            const config = readModalGitHubConfig();
+            config.token = '';
+            saveGitHubSyncConfig(config);
+            document.getElementById('github-token').value = '';
+            document.getElementById('github-token').placeholder = '粘贴 GitHub Token';
+            setGitHubStatus('Token 已清空');
+        };
+
+        document.getElementById('github-upload').onclick = async () => {
+            try {
+                const config = readModalGitHubConfig();
+                const shops = readShopListFromText(textarea.value);
+                setGitHubStatus('正在上传到 GitHub...');
+                const savedList = await uploadShopListToGitHub(config, shops);
+                GM_setValue(STORAGE_KEY, savedList);
+                textarea.value = savedList.join('\n');
+                updateModalCount();
+                updateStatusText(`已上传 GitHub 备份\n共 ${savedList.length} 个`);
+                setGitHubStatus(`上传完成，共 ${savedList.length} 个`);
+            } catch (error) {
+                setGitHubStatus(error.message || '上传失败', true);
+            }
+        };
+
+        document.getElementById('github-download').onclick = async () => {
+            if (!confirm('确定用 GitHub 备份覆盖本地已抓取清单吗？')) return;
+            try {
+                const config = readModalGitHubConfig();
+                setGitHubStatus('正在从 GitHub 读取...');
+                const remoteList = await downloadShopListFromGitHub(config);
+                GM_setValue(STORAGE_KEY, remoteList);
+                textarea.value = remoteList.join('\n');
+                updateModalCount();
+                updateStatusText(`已从 GitHub 恢复\n共 ${remoteList.length} 个`);
+                setGitHubStatus(`恢复完成，共 ${remoteList.length} 个`);
+            } catch (error) {
+                setGitHubStatus(error.message || '恢复失败', true);
+            }
+        };
+
+        document.getElementById('github-merge').onclick = async () => {
+            try {
+                const config = readModalGitHubConfig();
+                setGitHubStatus('正在合并本地和 GitHub 记录...');
+                let remoteList = [];
+                try {
+                    remoteList = await downloadShopListFromGitHub(config);
+                } catch (error) {
+                    if (!String(error.message || '').includes('还没有备份文件')) throw error;
+                }
+                const mergedList = normalizeShopList(readShopListFromText(textarea.value).concat(remoteList));
+                const savedList = await uploadShopListToGitHub(config, mergedList);
+                GM_setValue(STORAGE_KEY, savedList);
+                textarea.value = savedList.join('\n');
+                updateModalCount();
+                updateStatusText(`已合并同步 GitHub\n共 ${savedList.length} 个`);
+                setGitHubStatus(`合并同步完成，本地和 GitHub 共 ${savedList.length} 个`);
+            } catch (error) {
+                setGitHubStatus(error.message || '合并同步失败', true);
+            }
+        };
     }
 
     function showConfirmModal(count, shopName, isDuplicate, minSales, minPrice, onConfirm) {
