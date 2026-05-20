@@ -4,7 +4,7 @@
 // @description  提交核价（自改版，无需下载器EXE，带可视化配置、接口日志和业务明细）
 // @author       TonyTonyYang
 // @match        https://agentseller.temu.com/newon/product-select*
-// @version      2026.0520.1
+// @version      2026.0520.2
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
@@ -14,6 +14,7 @@
 // ==/UserScript==
 
 const NOEXE_STORAGE_KEY = "goldabcd_noexe_config_v1";
+const NOEXE_UI_VERSION = "2026.0520.2";
 const NOEXE_DEFAULT_CONFIG = {
     "version": 1,
     "malls": [],
@@ -177,10 +178,15 @@ function registerNoExeConfigMenu() {
 }
 
 function ensureNoExeConfigButton() {
-    if (document.getElementById(NOEXE_UI_HOST_ID)) return;
+    const existingHost = document.getElementById(NOEXE_UI_HOST_ID);
+    if (existingHost) {
+        if (noExeUiContext && noExeUiContext.root && existingHost.shadowRoot === noExeUiContext.root) return;
+        existingHost.remove();
+    }
 
     const host = document.createElement("div");
     host.id = NOEXE_UI_HOST_ID;
+    host.dataset.noexeUiVersion = NOEXE_UI_VERSION;
     (document.documentElement || document.body).appendChild(host);
 
     const root = host.attachShadow({ mode: "open" });
@@ -633,7 +639,7 @@ function noExeRenderPanel() {
         <div class="noexe-head">
             <div>
                 <div class="noexe-title">自改版配置</div>
-                <div class="noexe-subtitle">配置保存在脚本存储里，不依赖下载器 EXE</div>
+                <div class="noexe-subtitle">配置保存在脚本存储里，不依赖下载器 EXE；UI ${escapeNoExe(NOEXE_UI_VERSION)}</div>
             </div>
             <button class="noexe-icon-btn" type="button" data-action="close">×</button>
         </div>
