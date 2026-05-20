@@ -4,7 +4,7 @@
 // @description  提交核价（自改版，无需下载器EXE，带可视化配置、接口日志和业务明细）
 // @author       TonyTonyYang
 // @match        https://agentseller.temu.com/newon/product-select*
-// @version      2026.0520.2
+// @version      2026.0520.4
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
@@ -14,7 +14,7 @@
 // ==/UserScript==
 
 const NOEXE_STORAGE_KEY = "goldabcd_noexe_config_v1";
-const NOEXE_UI_VERSION = "2026.0520.2";
+const NOEXE_UI_VERSION = "2026.0520.4";
 const NOEXE_DEFAULT_CONFIG = {
     "version": 1,
     "malls": [],
@@ -403,7 +403,7 @@ function ensureNoExeConfigButton() {
             .noexe-switch input:checked + .noexe-track::after { transform: translateX(16px); }
             .noexe-grid {
                 display: grid;
-                grid-template-columns: repeat(auto-fill, minmax(278px, 1fr));
+                grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
                 gap: 12px;
             }
             .noexe-card {
@@ -414,7 +414,7 @@ function ensureNoExeConfigButton() {
             }
             .noexe-card-head {
                 display: grid;
-                grid-template-columns: 1fr auto;
+                grid-template-columns: 1fr;
                 gap: 8px;
                 align-items: center;
                 margin-bottom: 10px;
@@ -422,7 +422,7 @@ function ensureNoExeConfigButton() {
             .noexe-card-actions {
                 display: flex;
                 flex-wrap: wrap;
-                justify-content: flex-end;
+                justify-content: flex-start;
                 gap: 6px;
             }
             .noexe-price-list {
@@ -742,12 +742,12 @@ function renderNoExePrices(config) {
             <div class="noexe-generator-title">自动生成阶梯价</div>
             <div class="noexe-generator-row">
                 <label>
-                    <span class="noexe-note">最大价（第 1 轮，分）</span>
-                    <input class="noexe-input" type="number" min="1" step="1" data-input="generator-max" value="${escapeNoExeAttr(generator.maxPrice)}" placeholder="如 1350">
+                    <span class="noexe-note">最大价（第 1 轮，元）</span>
+                    <input class="noexe-input" data-input="generator-max" value="${escapeNoExeAttr(generator.maxPrice)}" placeholder="如 13.5">
                 </label>
                 <label>
-                    <span class="noexe-note">最小价（最后一轮，分）</span>
-                    <input class="noexe-input" type="number" min="1" step="1" data-input="generator-min" value="${escapeNoExeAttr(generator.minPrice)}" placeholder="如 1000">
+                    <span class="noexe-note">最小价（最后一轮，元）</span>
+                    <input class="noexe-input" data-input="generator-min" value="${escapeNoExeAttr(generator.minPrice)}" placeholder="如 8.5">
                 </label>
                 <label>
                     <span class="noexe-note">轮次</span>
@@ -756,7 +756,7 @@ function renderNoExePrices(config) {
                 <button class="noexe-btn" type="button" data-action="add-spec-generated">按生成新增</button>
                 <button class="noexe-btn secondary" type="button" data-action="apply-generator-visible">生成到当前显示规格</button>
             </div>
-            <div class="noexe-note" style="margin-top:8px;">会从最大价均匀递减到最小价；有搜索时，“当前显示规格”只覆盖搜索结果。</div>
+            <div class="noexe-note" style="margin-top:8px;">这里固定按元输入，生成后自动换算成分保存，如 13.5 元生成 1350，8.5 元生成 850。</div>
         </div>
         ${entries.length ? `<div class="noexe-grid">${entries.map(function(entry) {
             return renderNoExeSpecCard(entry[0], entry[1]);
@@ -1177,11 +1177,11 @@ function buildNoExeSpecPayload(specName, prices) {
 
 function buildNoExeGeneratedPricesFromUi() {
     const generator = getNoExeGeneratorState();
-    const maxPrice = Number(generator.maxPrice);
-    const minPrice = Number(generator.minPrice);
+    const maxPrice = parseNoExeGeneratorPrice(generator.maxPrice);
+    const minPrice = parseNoExeGeneratorPrice(generator.minPrice);
     const rounds = Number(generator.rounds);
-    if (!Number.isInteger(maxPrice) || maxPrice <= 0) return alertAndReturnNoExe("请先填写大于 0 的最大价");
-    if (!Number.isInteger(minPrice) || minPrice <= 0) return alertAndReturnNoExe("请先填写大于 0 的最小价");
+    if (!Number.isInteger(maxPrice) || maxPrice <= 0) return alertAndReturnNoExe("请先填写大于 0 的最大价，单位是元");
+    if (!Number.isInteger(minPrice) || minPrice <= 0) return alertAndReturnNoExe("请先填写大于 0 的最小价，单位是元");
     if (!Number.isInteger(rounds) || rounds <= 0) return alertAndReturnNoExe("请先填写正整数轮次");
     if (maxPrice < minPrice) return alertAndReturnNoExe("最大价不能小于最小价");
     const prices = [];
@@ -1195,6 +1195,16 @@ function buildNoExeGeneratedPricesFromUi() {
         }
     }
     return prices;
+}
+
+function parseNoExeGeneratorPrice(value) {
+    const text = String(value === undefined || value === null ? "" : value).trim();
+    if (!text) return NaN;
+    const normalized = text.replace(/￥/g, "").replace(/元/g, "").trim();
+    if (!/^\d+(?:\.\d+)?$/.test(normalized)) return NaN;
+    const numberValue = Number(normalized);
+    if (!Number.isFinite(numberValue)) return NaN;
+    return Math.round(numberValue * 100);
 }
 
 async function readNoExeSpecPayloadFromClipboard() {
