@@ -4,7 +4,7 @@
 // @description  提交核价（自改版，无需下载器EXE，带可视化配置、接口日志和业务明细）
 // @author       TonyTonyYang
 // @match        https://agentseller.temu.com/newon/product-select*
-// @version      2026.0520.4
+// @version      2026.0520.5
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
@@ -14,7 +14,7 @@
 // ==/UserScript==
 
 const NOEXE_STORAGE_KEY = "goldabcd_noexe_config_v1";
-const NOEXE_UI_VERSION = "2026.0520.4";
+const NOEXE_UI_VERSION = "2026.0520.5";
 const NOEXE_DEFAULT_CONFIG = {
     "version": 1,
     "malls": [],
@@ -427,14 +427,18 @@ function ensureNoExeConfigButton() {
             }
             .noexe-price-list {
                 display: grid;
-                grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
                 gap: 8px;
             }
             .noexe-price-item {
                 display: grid;
-                grid-template-columns: 24px 1fr 26px;
+                grid-template-columns: 24px minmax(92px, 1fr) 26px;
                 align-items: center;
                 gap: 4px;
+            }
+            .noexe-price-item .noexe-input {
+                min-width: 92px;
+                font-variant-numeric: tabular-nums;
             }
             .noexe-round {
                 color: #6b7280;
@@ -572,6 +576,7 @@ function ensureNoExeConfigButton() {
                 .noexe-panel { width: 100vw; }
                 .noexe-body { padding: 12px; }
                 .noexe-generator-row { grid-template-columns: 1fr; }
+                .noexe-price-list { grid-template-columns: 1fr; }
                 .noexe-table { min-width: 680px; }
                 .noexe-table-wrap { overflow-x: auto; }
             }
