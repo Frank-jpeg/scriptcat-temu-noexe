@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Temu 销售管理备货计算
 // @namespace    http://tampermonkey.net/
-// @version      2026.0521.3
+// @version      2026.0521.4
 // @description  在 Temu 销售管理页按近7天销量、备货天数、仓内可用库存和已发货库存计算每个颜色/SKU需要备货的数量
 // @author       Codex
 // @match        https://agentseller.temu.com/stock/fully-mgt/sale-manage/main*
@@ -54,12 +54,40 @@
 
     root.appendChild(button);
     root.appendChild(panel);
-    document.body.appendChild(root);
 
     state.root = root;
     state.button = button;
     state.panel = panel;
     state.resultBox = resultBox;
+
+    mountRoot();
+  }
+
+  function mountRoot() {
+    if (!state.root) return;
+
+    const anchor = findToolbarAnchorButton();
+    if (anchor?.parentElement) {
+      if (state.root.parentElement !== anchor.parentElement || anchor.nextElementSibling !== state.root) {
+        anchor.insertAdjacentElement('afterend', state.root);
+      }
+      state.root.classList.add('tsc-embedded');
+      state.root.classList.remove('tsc-floating');
+      return;
+    }
+
+    if (state.root.parentElement !== document.body) {
+      document.body.appendChild(state.root);
+    }
+    state.root.classList.add('tsc-floating');
+    state.root.classList.remove('tsc-embedded');
+  }
+
+  function findToolbarAnchorButton() {
+    const buttons = [...document.querySelectorAll('button')];
+    return buttons.find((button) => normalizeTextKey(button.innerText || button.textContent) === 'Excel修改卖家仓库存')
+      || buttons.find((button) => normalizeTextKey(button.innerText || button.textContent) === '期望到货区域设置')
+      || buttons.find((button) => normalizeTextKey(button.innerText || button.textContent) === '批量申请备货');
   }
 
   function injectStyle() {
@@ -69,12 +97,21 @@
     style.id = `${APP_ID}-style`;
     style.textContent = `
       #${APP_ID} {
-        position: fixed;
-        right: 18px;
-        top: 118px;
         z-index: 2147483000;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
         color: #1f2937;
+      }
+      #${APP_ID}.tsc-floating {
+        position: fixed;
+        right: 18px;
+        top: 118px;
+      }
+      #${APP_ID}.tsc-embedded {
+        display: inline-flex;
+        align-items: center;
+        margin-left: 8px;
+        height: 28px;
+        vertical-align: top;
       }
       #${APP_ID}.tsc-scanning {
         pointer-events: none !important;
@@ -85,20 +122,24 @@
       }
       #${APP_ID} .tsc-float-button {
         width: 86px;
-        height: 34px;
+        height: 28px;
         border: 0;
-        border-radius: 6px;
+        border-radius: 4px;
         background: #1677ff;
         color: #fff;
-        font-size: 14px;
+        font-size: 13px;
         font-weight: 600;
         cursor: pointer;
-        box-shadow: 0 6px 18px rgba(22, 119, 255, 0.28);
+        box-shadow: none;
       }
       #${APP_ID} .tsc-float-button:hover {
         background: #0958d9;
       }
       #${APP_ID} .tsc-panel {
+        position: fixed;
+        right: 18px;
+        top: 92px;
+        z-index: 2147483001;
         width: min(620px, calc(100vw - 36px));
         max-height: calc(100vh - 150px);
         overflow: hidden;
@@ -1188,6 +1229,7 @@
 
   const observer = new MutationObserver(() => {
     if (!document.getElementById(APP_ID)) init();
+    else mountRoot();
   });
   observer.observe(document.documentElement, { childList: true, subtree: true });
 })();
