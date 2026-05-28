@@ -4,7 +4,7 @@
 // @description  开通JIT（自改版，无需下载器EXE，带可视化配置、接口日志和业务明细）
 // @author       TonyTonyYang
 // @match        https://agentseller.temu.com/newon/product-select*
-// @version      2026.0518.13
+// @version      2026.0528.1
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
@@ -14,6 +14,7 @@
 // ==/UserScript==
 
 const NOEXE_STORAGE_KEY = "goldabcd_noexe_config_v1";
+const NOEXE_UI_VERSION = "2026.0528.1";
 const NOEXE_DEFAULT_CONFIG = {
     "version": 1,
     "malls": [],
@@ -41,9 +42,13 @@ const NOEXE_LOG_SCRIPT_FILTERS = [
     { key: "confirm", label: "4 确认商品信息", match: "上新生命周期-4-确认商品信息" }
 ];
 const NOEXE_LOG_KEEP_PER_SCRIPT = 1000;
+const NOEXE_LOG_RENDER_LIMIT = 120;
+const NOEXE_LOG_MESSAGE_PREVIEW_LENGTH = 600;
+const NOEXE_LOG_RENDER_DEBOUNCE_MS = 300;
 let noExeUiContext = null;
 const noExeOriginalConsoleLog = console.log.bind(console);
 let noExeLogCounter = 0;
+let noExeLogRenderTimer = null;
 let noExeLogState = {
     stats: { total: 0, success: 0, fail: 0, apiError: 0, inFlight: 0, detail: 0 },
     active: {},
@@ -177,10 +182,15 @@ function registerNoExeConfigMenu() {
 }
 
 function ensureNoExeConfigButton() {
-    if (document.getElementById(NOEXE_UI_HOST_ID)) return;
+    const existingHost = document.getElementById(NOEXE_UI_HOST_ID);
+    if (existingHost) {
+        if (existingHost.dataset.noexeUiVersion === NOEXE_UI_VERSION) return;
+        existingHost.remove();
+    }
 
     const host = document.createElement("div");
     host.id = NOEXE_UI_HOST_ID;
+    host.dataset.noexeUiVersion = NOEXE_UI_VERSION;
     (document.documentElement || document.body).appendChild(host);
 
     const root = host.attachShadow({ mode: "open" });
@@ -1105,6 +1115,22 @@ function noExeTrimLogEntries() {
         return true;
     });
 }
+
+function noExeScheduleLogRender() {
+    if (!noExeIsLogPanelOpen()) return;
+    if (noExeLogRenderTimer) return;
+    noExeLogRenderTimer = setTimeout(function() {
+        noExeLogRenderTimer = null;
+        if (noExeIsLogPanelOpen()) noExeRenderLogPanel();
+    }, NOEXE_LOG_RENDER_DEBOUNCE_MS);
+}
+
+function noExeShortLogMessage(message) {
+    const text = String(message || "");
+    if (text.length <= NOEXE_LOG_MESSAGE_PREVIEW_LENGTH) return text;
+    return text.slice(0, NOEXE_LOG_MESSAGE_PREVIEW_LENGTH) + "\n...已截断显示，复制日志可查看完整内容";
+}
+
 function noExeReceiveLogEvent(event) {
     if (!noExeLogState || !event || !event.detail) return;
     const detail = event.detail;
@@ -1121,7 +1147,7 @@ function noExeReceiveLogEvent(event) {
             source: detail.source || ""
         });
         noExeTrimLogEntries();
-        if (noExeIsLogPanelOpen()) noExeRenderLogPanel();
+        noExeScheduleLogRender();
         return;
     }
 
@@ -1130,7 +1156,7 @@ function noExeReceiveLogEvent(event) {
         noExeLogState.stats.inFlight += 1;
         noExeLogState.active[detail.id] = detail;
         noExeUpdateLogBadge();
-        if (noExeIsLogPanelOpen()) noExeRenderLogPanel();
+        noExeScheduleLogRender();
         return;
     }
 
@@ -1154,7 +1180,7 @@ function noExeReceiveLogEvent(event) {
     });
     noExeTrimLogEntries();
     noExeUpdateLogBadge();
-    if (noExeIsLogPanelOpen()) noExeRenderLogPanel();
+    noExeScheduleLogRender();
 }
 
 function noExeEndpointName(url) {
@@ -1263,10 +1289,12 @@ function noExeRenderLogFilters() {
 }
 function noExeRenderLogPanel() {
     if (!noExeUiContext) return;
-    const entries = noExeGetFilteredLogEntries();
+    const allEntries = noExeGetFilteredLogEntries();
+    const entries = allEntries.slice(0, NOEXE_LOG_RENDER_LIMIT);
     const activeList = noExeGetFilteredActiveLogs();
-    const stats = noExeGetLogStatsForFilter(entries, activeList);
+    const stats = noExeGetLogStatsForFilter(allEntries, activeList);
     const selectedFilter = noExeGetLogFilter(noExeLogState.filter || "all");
+    const limitNote = allEntries.length > entries.length ? `当前只显示最近 ${entries.length}/${allEntries.length} 条，复制日志包含当前筛选全部日志。` : `当前显示 ${entries.length}/${allEntries.length} 条。`;
     const content = noExeUiContext.root.querySelector(".noexe-log-content");
     if (!content) return;
 
@@ -1293,7 +1321,7 @@ function noExeRenderLogPanel() {
             <div class="noexe-toolbar">
                 <button class="noexe-btn" type="button" data-log-action="copy">复制当前筛选日志</button>
                 <button class="noexe-btn secondary" type="button" data-log-action="clear">清空日志</button>
-                <span class="noexe-note">请求成功=接口正常返回；业务失败=返回 success=false；接口异常=网络/HTTP/JSON 异常；业务明细=脚本控制台明细输出，尽量按控制台原内容保留。</span>
+                <span class="noexe-note">${escapeNoExe(limitNote)} 请求成功=接口正常返回；业务失败=返回 success=false；接口异常=网络/HTTP/JSON 异常；业务明细=脚本控制台明细输出，尽量按控制台原内容保留。</span>
             </div>
             ${entries.length ? `<div class="noexe-log-list">${entries.map(noExeRenderLogEntry).join("")}</div>` : `<div class="noexe-empty">当前筛选还没有运行日志。</div>`}
         </div>
@@ -1314,6 +1342,7 @@ function noExeRenderStat(label, value) {
 
 function noExeRenderLogEntry(entry) {
     const label = entry.type === "success" ? "请求成功" : entry.type === "fail" ? "业务失败" : entry.type === "detail" ? "业务明细" : entry.type === "detail-error" ? "业务异常" : "接口异常";
+    const message = noExeShortLogMessage(entry.message);
     return `
         <div class="noexe-log-item ${escapeNoExeAttr(entry.type)}">
             <div class="noexe-log-line">
@@ -1321,7 +1350,7 @@ function noExeRenderLogEntry(entry) {
                 <span>${escapeNoExe(new Date(entry.time).toLocaleTimeString())} / ${escapeNoExe(entry.duration)}ms</span>
             </div>
             <div class="noexe-log-meta">${escapeNoExe(entry.endpoint)}${entry.source ? ` · ${escapeNoExe(entry.source)}` : ""}</div>
-            ${entry.message ? `<div class="noexe-log-message">${escapeNoExe(entry.message)}</div>` : ""}
+            ${message ? `<div class="noexe-log-message">${escapeNoExe(message)}</div>` : ""}
         </div>
     `;
 }
