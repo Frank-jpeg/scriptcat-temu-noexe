@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         TEMU商品列表导出
 // @namespace    https://tampermonkey.net/
-// @version      8.4.0
-// @description  独立浮窗导出当前筛选结果的 SKC、SKU、创建时间、材质、成分、体积重量与商品属性，支持右侧极简收起。
+// @version      8.5.0
+// @description  独立浮窗导出当前筛选结果的商品列表信息，支持导出字段勾选、SKU体积重量与右侧极简收起。
 // @match        https://agentseller.temu.com/goods/list*
 // @downloadURL  https://raw.githubusercontent.com/jianpanlan0-svg/scriptcat-temu-noexe/main/TEMU%E5%95%86%E5%93%81%E5%88%97%E8%A1%A8%E5%AF%BC%E5%87%BA.user.js
 // @updateURL    https://raw.githubusercontent.com/jianpanlan0-svg/scriptcat-temu-noexe/main/TEMU%E5%95%86%E5%93%81%E5%88%97%E8%A1%A8%E5%AF%BC%E5%87%BA.user.js
@@ -12,15 +12,38 @@
 (function () {
   'use strict';
 
-  const PANEL_ID = '__codex_temu_skc_props_export_v84';
-  const STATUS_ID = '__codex_temu_skc_props_export_status_v84';
-  const PROGRESS_BAR_ID = '__codex_temu_skc_props_export_progress_v84';
-  const PROGRESS_TEXT_ID = '__codex_temu_skc_props_export_progress_text_v84';
-  const TOGGLE_ID = '__codex_temu_skc_props_export_toggle_v84';
-  const HEADER_ID = '__codex_temu_skc_props_export_header_v84';
-  const CONTENT_ID = '__codex_temu_skc_props_export_content_v84';
-  const TITLE_ID = '__codex_temu_skc_props_export_title_v84';
-  const STORAGE_KEY = '__codex_temu_skc_props_export_collapsed_v84';
+  const PANEL_ID = '__codex_temu_goods_list_export_v85';
+  const STATUS_ID = '__codex_temu_goods_list_export_status_v85';
+  const PROGRESS_BAR_ID = '__codex_temu_goods_list_export_progress_v85';
+  const PROGRESS_TEXT_ID = '__codex_temu_goods_list_export_progress_text_v85';
+  const TOGGLE_ID = '__codex_temu_goods_list_export_toggle_v85';
+  const HEADER_ID = '__codex_temu_goods_list_export_header_v85';
+  const CONTENT_ID = '__codex_temu_goods_list_export_content_v85';
+  const TITLE_ID = '__codex_temu_goods_list_export_title_v85';
+  const MODAL_ID = '__codex_temu_goods_list_export_modal_v85';
+  const STORAGE_KEY = '__codex_temu_goods_list_export_collapsed_v85';
+  const FIELDS_STORAGE_KEY = '__codex_temu_goods_list_export_fields_v85';
+
+  const EXPORT_FIELDS = [
+    { key: 'index', label: '序号' },
+    { key: 'page', label: '页码' },
+    { key: 'skcId', label: 'SKC_ID' },
+    { key: 'spuId', label: 'SPU_ID' },
+    { key: 'extCode', label: '商品货号' },
+    { key: 'title', label: '商品名称' },
+    { key: 'material', label: '材质' },
+    { key: 'composition', label: '成分' },
+    { key: 'skuId', label: 'SKU_ID' },
+    { key: 'skuSpec', label: 'SKU规格' },
+    { key: 'skuExtCode', label: 'SKU货号' },
+    { key: 'createTime', label: '创建时间' },
+    { key: 'sellerVolume', label: '卖家测量体积' },
+    { key: 'sellerWeight', label: '卖家测量重量' },
+    { key: 'platformVolume', label: '平台测量参考体积' },
+    { key: 'platformWeight', label: '平台测量参考重量' },
+    { key: 'attributes', label: '商品属性' }
+  ];
+  const DEFAULT_FIELD_KEYS = EXPORT_FIELDS.map(field => field.key);
 
   function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -76,6 +99,29 @@
       return `"${text.replace(/"/g, '""')}"`;
     }
     return text;
+  }
+
+  function getSavedFieldKeys() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(FIELDS_STORAGE_KEY) || '[]');
+      if (Array.isArray(saved)) {
+        const validKeys = new Set(EXPORT_FIELDS.map(field => field.key));
+        const keys = saved.filter(key => validKeys.has(key));
+        if (keys.length) return keys;
+      }
+    } catch (error) {
+      // Ignore bad localStorage data and fall back to all fields.
+    }
+    return DEFAULT_FIELD_KEYS.slice();
+  }
+
+  function saveFieldKeys(keys) {
+    localStorage.setItem(FIELDS_STORAGE_KEY, JSON.stringify(keys));
+  }
+
+  function getFieldsByKeys(keys) {
+    const selected = new Set(keys?.length ? keys : DEFAULT_FIELD_KEYS);
+    return EXPORT_FIELDS.filter(field => selected.has(field.key));
   }
 
   function firstFilled(...values) {
@@ -214,47 +260,12 @@
     };
   }
 
-  function downloadCsv(rows, suffix) {
-    const header = [
-      '序号',
-      '页码',
-      'SKC_ID',
-      'SPU_ID',
-      '商品货号',
-      '商品名称',
-      '材质',
-      '成分',
-      'SKU_ID',
-      'SKU规格',
-      'SKU货号',
-      '创建时间',
-      '卖家测量体积',
-      '卖家测量重量',
-      '平台测量参考体积',
-      '平台测量参考重量',
-      '商品属性'
-    ];
+  function downloadCsv(rows, suffix, fieldKeys) {
+    const fields = getFieldsByKeys(fieldKeys);
+    const header = fields.map(field => field.label);
     const lines = [
       header,
-      ...rows.map(row => [
-        row.index,
-        row.page,
-        row.skcId,
-        row.spuId,
-        row.extCode,
-        row.title,
-        row.material,
-        row.composition,
-        row.skuId,
-        row.skuSpec,
-        row.skuExtCode,
-        row.createTime,
-        row.sellerVolume,
-        row.sellerWeight,
-        row.platformVolume,
-        row.platformWeight,
-        row.attributes
-      ])
+      ...rows.map(row => fields.map(field => row[field.key]))
     ].map(cols => cols.map(escapeCsvCell).join(','));
     const content = '\uFEFF' + lines.join('\r\n');
     const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
@@ -262,7 +273,7 @@
     const a = document.createElement('a');
     const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
     a.href = url;
-    a.download = `temu-skc-props-standalone-${suffix}-${stamp}.csv`;
+    a.download = `temu-goods-list-${suffix}-${stamp}.csv`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -320,10 +331,103 @@
   }
 
   function setButtonsDisabled(disabled) {
-    document.querySelectorAll('[data-role="action-v84"]').forEach(button => {
+    document.querySelectorAll('[data-role="action-v85"]').forEach(button => {
       button.disabled = disabled;
       button.style.opacity = disabled ? '0.6' : '1';
       button.style.cursor = disabled ? 'not-allowed' : 'pointer';
+    });
+  }
+
+  function removeExportDialog() {
+    document.getElementById(MODAL_ID)?.remove();
+  }
+
+  function showExportDialog(options) {
+    removeExportDialog();
+
+    return new Promise(resolve => {
+      const savedKeys = new Set(getSavedFieldKeys());
+      const overlay = document.createElement('div');
+      overlay.id = MODAL_ID;
+      overlay.style.cssText = [
+        'position:fixed',
+        'inset:0',
+        'z-index:1000000',
+        'background:rgba(0,0,0,.38)',
+        'display:flex',
+        'align-items:center',
+        'justify-content:center',
+        'font-family:Segoe UI, Microsoft YaHei, sans-serif',
+        'color:#222'
+      ].join(';');
+
+      const fieldHtml = EXPORT_FIELDS.map(field => `
+        <label style="display:flex;align-items:center;gap:6px;min-width:130px;height:28px;font-size:13px;cursor:pointer;">
+          <input type="checkbox" data-field-key="${field.key}" ${savedKeys.has(field.key) ? 'checked' : ''} style="width:14px;height:14px;accent-color:#4678ff;">
+          <span>${field.label}</span>
+        </label>
+      `).join('');
+
+      overlay.innerHTML = `
+        <div style="width:560px;max-width:calc(100vw - 28px);background:#fff;border-radius:6px;box-shadow:0 18px 60px rgba(0,0,0,.26);overflow:hidden;">
+          <div style="height:52px;display:flex;align-items:center;padding:0 18px;border-bottom:1px solid #edf0f5;font-size:16px;font-weight:600;">${options.title}</div>
+          <div style="padding:20px 26px 14px;">
+            <div style="font-size:14px;margin-bottom:10px;">${options.summary}</div>
+            <div style="font-size:13px;color:#8a5b15;background:#fff7e6;border:1px solid #ffd591;border-radius:4px;padding:8px 10px;margin-bottom:14px;">建议先手动把每页数量改到 500，再导出会更快。</div>
+            <label style="display:flex;align-items:center;gap:6px;height:30px;font-size:13px;cursor:pointer;border-bottom:1px solid #edf0f5;margin-bottom:10px;padding-bottom:10px;">
+              <input id="${MODAL_ID}_all" type="checkbox" style="width:14px;height:14px;accent-color:#4678ff;">
+              <span>全部字段</span>
+            </label>
+            <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px 10px;background:#fafafa;border-radius:4px;padding:10px 12px;">
+              ${fieldHtml}
+            </div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:12px;padding:16px 24px 18px;border-top:1px solid #edf0f5;">
+            <button id="${MODAL_ID}_export" type="button" style="min-width:64px;height:34px;border:none;border-radius:4px;background:#4678ff;color:#fff;font-size:14px;font-weight:600;cursor:pointer;">导出</button>
+            <button id="${MODAL_ID}_cancel" type="button" style="min-width:64px;height:34px;border:1px solid #bfc4cc;border-radius:4px;background:#fff;color:#222;font-size:14px;cursor:pointer;">取消</button>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(overlay);
+
+      const allCheckbox = document.getElementById(`${MODAL_ID}_all`);
+      const fieldCheckboxes = Array.from(overlay.querySelectorAll('input[data-field-key]'));
+
+      function syncAllCheckbox() {
+        const checkedCount = fieldCheckboxes.filter(input => input.checked).length;
+        allCheckbox.checked = checkedCount === fieldCheckboxes.length;
+        allCheckbox.indeterminate = checkedCount > 0 && checkedCount < fieldCheckboxes.length;
+      }
+
+      allCheckbox.addEventListener('change', () => {
+        fieldCheckboxes.forEach(input => {
+          input.checked = allCheckbox.checked;
+        });
+        syncAllCheckbox();
+      });
+
+      fieldCheckboxes.forEach(input => {
+        input.addEventListener('change', syncAllCheckbox);
+      });
+
+      document.getElementById(`${MODAL_ID}_cancel`).addEventListener('click', () => {
+        removeExportDialog();
+        resolve(null);
+      });
+
+      document.getElementById(`${MODAL_ID}_export`).addEventListener('click', () => {
+        const keys = fieldCheckboxes.filter(input => input.checked).map(input => input.dataset.fieldKey);
+        if (!keys.length) {
+          window.alert('请至少勾选一个导出字段');
+          return;
+        }
+        saveFieldKeys(keys);
+        removeExportDialog();
+        resolve(keys);
+      });
+
+      syncAllCheckbox();
     });
   }
 
@@ -366,12 +470,12 @@
     return { rows, collectedProducts };
   }
 
-  async function runExport(productLimit, suffix) {
+  async function runExport(productLimit, suffix, fieldKeys) {
     setButtonsDisabled(true);
     setProgress(0, productLimit);
     try {
       const result = await collectRows(productLimit);
-      downloadCsv(result.rows, suffix);
+      downloadCsv(result.rows, suffix, fieldKeys);
       setStatus(`导出完成，已下载 ${result.rows.length} 行（${result.collectedProducts} 个商品）`, false);
       setProgress(result.collectedProducts, productLimit);
     } catch (error) {
@@ -381,15 +485,19 @@
     }
   }
 
-  function handleCurrentExport() {
+  async function handleCurrentExport() {
     const currentItems = getMemoryRows();
     const currentCount = currentItems.length;
     const currentSkuRows = countSkuExportRows(currentItems);
-    if (!window.confirm(`检测到当前页 ${currentCount} 个商品，预计导出 ${currentSkuRows} 行 SKU 数据，确认导出当前页吗？`)) return;
-    runExport(Math.max(currentCount, 1), 'current-page');
+    const fieldKeys = await showExportDialog({
+      title: '导出当前页',
+      summary: `检测到当前页 ${currentCount} 个商品，预计导出 ${currentSkuRows} 行 SKU 数据。`
+    });
+    if (!fieldKeys) return;
+    runExport(Math.max(currentCount, 1), 'current-page', fieldKeys);
   }
 
-  function handleFullExport() {
+  async function handleFullExport() {
     const currentItems = getMemoryRows();
     const currentCount = currentItems.length;
     const currentSkuRows = countSkuExportRows(currentItems);
@@ -398,8 +506,12 @@
       setStatus('未识别到筛选结果总条数，不能全量导出', true);
       return;
     }
-    if (!window.confirm(`检测到当前筛选结果共 ${totalCount} 个商品，当前页 ${currentCount} 个商品/${currentSkuRows} 行 SKU 数据，确认开始导出吗？`)) return;
-    runExport(totalCount, 'filtered-all');
+    const fieldKeys = await showExportDialog({
+      title: '下载查询结果',
+      summary: `共查询到 ${totalCount} 个商品；当前页 ${currentCount} 个商品，约 ${currentSkuRows} 行 SKU 数据。`
+    });
+    if (!fieldKeys) return;
+    runExport(totalCount, 'filtered-all', fieldKeys);
   }
 
   function applyCollapsedState(collapsed) {
@@ -489,17 +601,18 @@
 
     panel.innerHTML = `
       <div id="${HEADER_ID}" style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:linear-gradient(90deg,#ff7aa8 0%,#ff4f87 100%);color:#fff;">
-        <div id="${TITLE_ID}" style="font-size:14px;font-weight:700;">TEMU SKC 属性导出</div>
+        <div id="${TITLE_ID}" style="font-size:14px;font-weight:700;">TEMU商品列表导出</div>
         <button id="${TOGGLE_ID}" type="button" style="border:none;background:rgba(255,255,255,.16);color:#fff;border-radius:999px;padding:4px 10px;font-size:12px;cursor:pointer;">收起</button>
       </div>
       <div id="${CONTENT_ID}" style="padding:14px;">
         <div style="font-size:12px;line-height:1.7;color:#7c5a67;margin-bottom:12px;">
           当前页 <b>${current}</b> 个商品，约 <b>${currentSkuRows}</b> 行 SKU；筛选结果约 <b>${total || '-'}</b> 个商品。<br>
-          导出字段：SKC、SKU、创建时间、材质、成分、体积重量、商品属性。
+          建议先手动把每页改到 <b>500</b>，导出会更快。<br>
+          导出前可勾选需要的字段。
         </div>
         <div style="display:flex;gap:8px;margin-bottom:12px;">
-          <button data-role="action-v84" id="${PANEL_ID}_current" type="button" style="flex:1;height:38px;border:none;border-radius:10px;background:#ff6b9a;color:#fff;font-weight:700;cursor:pointer;">导出当前页</button>
-          <button data-role="action-v84" id="${PANEL_ID}_full" type="button" style="flex:1;height:38px;border:none;border-radius:10px;background:#ff4f87;color:#fff;font-weight:700;cursor:pointer;">导出全部</button>
+          <button data-role="action-v85" id="${PANEL_ID}_current" type="button" style="flex:1;height:38px;border:none;border-radius:10px;background:#ff6b9a;color:#fff;font-weight:700;cursor:pointer;">导出当前页</button>
+          <button data-role="action-v85" id="${PANEL_ID}_full" type="button" style="flex:1;height:38px;border:none;border-radius:10px;background:#ff4f87;color:#fff;font-weight:700;cursor:pointer;">导出全部</button>
         </div>
         <div style="margin-bottom:8px;">
           <div style="height:10px;background:#ffe3ec;border-radius:999px;overflow:hidden;">
