@@ -4,7 +4,7 @@
 // @description  提交核价（自改版，无需下载器EXE，带可视化配置、接口日志和业务明细）
 // @author       TonyTonyYang
 // @match        https://agentseller.temu.com/newon/product-select*
-// @version      2026.0616.1
+// @version      2026.0616.2
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
@@ -15,7 +15,7 @@
 
 const NOEXE_STORAGE_KEY = "goldabcd_noexe_config_v1";
 const NOEXE_STORAGE_BACKUP_KEY = "goldabcd_noexe_config_v1_local_backup";
-const NOEXE_UI_VERSION = "2026.0616.1";
+const NOEXE_UI_VERSION = "2026.0616.2";
 const NOEXE_DEFAULT_CONFIG = {
     "version": 1,
     "malls": [],
@@ -2670,6 +2670,15 @@ let maxTryCount = 10;
         if (exactMatches.length === 1) return { key: exactMatches[0], ambiguous: [] };
         if (exactMatches.length > 1) return { key: "", ambiguous: exactMatches };
 
+        const unorderedKey = normalizeNoExeSpecUnorderedKey(text);
+        if (unorderedKey) {
+            const unorderedMatches = Array.from(targetPriceMap.keys()).filter(function(key) {
+                return normalizeNoExeSpecUnorderedKey(key) === unorderedKey;
+            });
+            if (unorderedMatches.length === 1) return { key: unorderedMatches[0], ambiguous: [] };
+            if (unorderedMatches.length > 1) return { key: "", ambiguous: unorderedMatches };
+        }
+
         if (!allowUniquePrefix) return null;
 
         const prefixMatches = Array.from(targetPriceMap.keys()).filter(function(key) {
@@ -2773,6 +2782,12 @@ let maxTryCount = 10;
             .replace(/\s*-\s*/g, "-")
             .replace(/\s+/g, "")
             .toLowerCase();
+    }
+
+    function normalizeNoExeSpecUnorderedKey(value) {
+        const parts = normalizeNoExeSpecKey(value).split("-").filter(Boolean);
+        if (parts.length < 2) return "";
+        return parts.sort().join("-");
     }
 
     function normalizeNoExeLogValue(value) {
