@@ -4,7 +4,7 @@
 // @description  提交核价（自改版，无需下载器EXE，带可视化配置、接口日志和业务明细）
 // @author       TonyTonyYang
 // @match        https://agentseller.temu.com/newon/product-select*
-// @version      2026.0615.2
+// @version      2026.0616.1
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
@@ -14,7 +14,8 @@
 // ==/UserScript==
 
 const NOEXE_STORAGE_KEY = "goldabcd_noexe_config_v1";
-const NOEXE_UI_VERSION = "2026.0615.2";
+const NOEXE_STORAGE_BACKUP_KEY = "goldabcd_noexe_config_v1_local_backup";
+const NOEXE_UI_VERSION = "2026.0616.1";
 const NOEXE_DEFAULT_CONFIG = {
     "version": 1,
     "malls": [],
@@ -139,23 +140,33 @@ function migrateNoExeLegacyPriceConfig(config) {
 }
 
 async function getNoExeValue(key, fallbackValue) {
+    const candidates = [];
     try {
         if (typeof GM_getValue === "function") {
             const value = GM_getValue(key, fallbackValue);
-            return value && typeof value.then === "function" ? await value : value;
+            candidates.push(await buildNoExeStoredCandidate("gm", value && typeof value.then === "function" ? await value : value));
         }
-        if (typeof GM !== "undefined" && GM.getValue) {
-            return await GM.getValue(key, fallbackValue);
+        else if (typeof GM !== "undefined" && GM.getValue) {
+            candidates.push(await buildNoExeStoredCandidate("gm", await GM.getValue(key, fallbackValue)));
         }
     } catch (e) {
         noExeBusinessLog("读取自改版配置失败，改用 localStorage", e);
     }
 
-    const raw = localStorage.getItem(key);
-    return raw === null ? fallbackValue : raw;
+    candidates.push(await buildNoExeStoredCandidate("local", getNoExeLocalStorageValue(key)));
+    candidates.push(await buildNoExeStoredCandidate("backup", getNoExeLocalStorageValue(NOEXE_STORAGE_BACKUP_KEY)));
+
+    const usable = candidates.filter(function(candidate) {
+        return candidate && candidate.usable;
+    }).sort(function(a, b) {
+        return b.score - a.score;
+    });
+    return usable.length ? usable[0].value : fallbackValue;
 }
 
 async function setNoExeValue(key, value) {
+    setNoExeLocalStorageValue(key, value);
+    setNoExeLocalStorageValue(NOEXE_STORAGE_BACKUP_KEY, value);
     try {
         if (typeof GM_setValue === "function") {
             const result = GM_setValue(key, value);
@@ -169,7 +180,66 @@ async function setNoExeValue(key, value) {
     } catch (e) {
         noExeBusinessLog("保存自改版配置失败，改用 localStorage", e);
     }
-    localStorage.setItem(key, value);
+}
+
+function isNoExeStoredValueUsable(value) {
+    if (value === undefined || value === null) return false;
+    if (typeof value === "string") {
+        const text = value.trim();
+        return !!text && text !== "null" && text !== "undefined";
+    }
+    return typeof value === "object";
+}
+
+async function buildNoExeStoredCandidate(source, value) {
+    return {
+        source,
+        value,
+        usable: isNoExeStoredValueUsable(value),
+        score: getNoExeStoredValueScore(value)
+    };
+}
+
+function getNoExeStoredValueScore(value) {
+    if (!isNoExeStoredValueUsable(value)) return -1;
+    let config = value;
+    if (typeof value === "string") {
+        try {
+            config = JSON.parse(value);
+        } catch (e) {
+            return -1;
+        }
+    }
+    if (!config || typeof config !== "object" || Array.isArray(config)) return -1;
+    const priceConfig = config.priceReviewConfig && typeof config.priceReviewConfig === "object" ? config.priceReviewConfig : config;
+    let score = Array.isArray(config.malls) ? config.malls.length : 0;
+    NOEXE_PRICE_GROUPS.forEach(function(group) {
+        const specGroup = priceConfig[group.key];
+        if (specGroup && typeof specGroup === "object" && !Array.isArray(specGroup)) {
+            score += Object.keys(specGroup).length * 10;
+        }
+    });
+    const multiple = priceConfig.priceMultiple;
+    if (multiple && typeof multiple === "object" && !Array.isArray(multiple)) score += Object.keys(multiple).length;
+    return score;
+}
+
+function getNoExeLocalStorageValue(key) {
+    try {
+        const raw = localStorage.getItem(key);
+        return raw === null ? null : raw;
+    } catch (e) {
+        noExeBusinessLog("读取 localStorage 配置失败", e);
+        return null;
+    }
+}
+
+function setNoExeLocalStorageValue(key, value) {
+    try {
+        localStorage.setItem(key, value);
+    } catch (e) {
+        noExeBusinessLog("保存 localStorage 配置失败", e);
+    }
 }
 
 async function saveNoExeConfig(config, shouldRender) {
@@ -728,7 +798,7 @@ function noExeRenderPanel() {
         <div class="noexe-head">
             <div>
                 <div class="noexe-title">自改版配置</div>
-                <div class="noexe-subtitle">配置保存在脚本存储里，不依赖下载器 EXE；UI ${escapeNoExe(NOEXE_UI_VERSION)}</div>
+                <div class="noexe-subtitle">配置双写到脚本存储和页面本地备份，不依赖下载器 EXE；UI ${escapeNoExe(NOEXE_UI_VERSION)}</div>
             </div>
             <button class="noexe-icon-btn" type="button" data-action="close">×</button>
         </div>

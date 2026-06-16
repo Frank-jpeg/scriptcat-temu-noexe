@@ -4,7 +4,7 @@
 // @description  增加库存（自改版，无需下载器EXE，带可视化配置、接口日志和业务明细）
 // @author       TonyTonyYang
 // @match        https://agentseller.temu.com/newon/product-select*
-// @version      2026.0528.1
+// @version      2026.0616.1
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
@@ -14,7 +14,8 @@
 // ==/UserScript==
 
 const NOEXE_STORAGE_KEY = "goldabcd_noexe_config_v1";
-const NOEXE_UI_VERSION = "2026.0528.1";
+const NOEXE_STORAGE_BACKUP_KEY = "goldabcd_noexe_config_v1_local_backup";
+const NOEXE_UI_VERSION = "2026.0616.1";
 const NOEXE_DEFAULT_CONFIG = {
     "version": 1,
     "malls": [],
@@ -88,7 +89,7 @@ async function loadNoExeConfig() {
         }
     }
 
-    if (!config || !Array.isArray(config.malls) || !config.priceReviewConfig) {
+    if (!config || typeof config !== "object" || Array.isArray(config)) {
         config = cloneNoExe(NOEXE_DEFAULT_CONFIG);
         await setNoExeValue(NOEXE_STORAGE_KEY, JSON.stringify(config));
     }
@@ -97,9 +98,10 @@ async function loadNoExeConfig() {
 }
 
 function normalizeNoExeConfig(config) {
-    config = config && typeof config === "object" ? config : {};
+    config = config && typeof config === "object" && !Array.isArray(config) ? config : {};
     if (!Array.isArray(config.malls)) config.malls = [];
-    if (!config.priceReviewConfig || typeof config.priceReviewConfig !== "object") config.priceReviewConfig = {};
+    if (!config.priceReviewConfig || typeof config.priceReviewConfig !== "object" || Array.isArray(config.priceReviewConfig)) config.priceReviewConfig = {};
+    migrateNoExeLegacyPriceConfig(config);
     NOEXE_PRICE_GROUPS.forEach(function(group) {
         if (!config.priceReviewConfig[group.key] || typeof config.priceReviewConfig[group.key] !== "object" || Array.isArray(config.priceReviewConfig[group.key])) {
             config.priceReviewConfig[group.key] = {};
@@ -119,24 +121,52 @@ function normalizeNoExeConfig(config) {
     return config;
 }
 
+function migrateNoExeLegacyPriceConfig(config) {
+    NOEXE_PRICE_GROUPS.forEach(function(group) {
+        const legacyGroup = config[group.key];
+        if (legacyGroup && typeof legacyGroup === "object" && !Array.isArray(legacyGroup)) {
+            config.priceReviewConfig[group.key] = Object.assign({}, legacyGroup, config.priceReviewConfig[group.key] || {});
+            delete config[group.key];
+        }
+    });
+    if (config.priceMultiple && typeof config.priceMultiple === "object" && !Array.isArray(config.priceMultiple)) {
+        config.priceReviewConfig.priceMultiple = Object.assign({}, config.priceMultiple, config.priceReviewConfig.priceMultiple || {});
+        delete config.priceMultiple;
+    }
+    if (config.maxTryCount !== undefined && config.priceReviewConfig.maxTryCount === undefined) {
+        config.priceReviewConfig.maxTryCount = config.maxTryCount;
+    }
+    delete config.maxTryCount;
+}
+
 async function getNoExeValue(key, fallbackValue) {
+    const candidates = [];
     try {
         if (typeof GM_getValue === "function") {
             const value = GM_getValue(key, fallbackValue);
-            return value && typeof value.then === "function" ? await value : value;
+            candidates.push(await buildNoExeStoredCandidate("gm", value && typeof value.then === "function" ? await value : value));
         }
-        if (typeof GM !== "undefined" && GM.getValue) {
-            return await GM.getValue(key, fallbackValue);
+        else if (typeof GM !== "undefined" && GM.getValue) {
+            candidates.push(await buildNoExeStoredCandidate("gm", await GM.getValue(key, fallbackValue)));
         }
     } catch (e) {
         noExeBusinessLog("读取自改版配置失败，改用 localStorage", e);
     }
 
-    const raw = localStorage.getItem(key);
-    return raw === null ? fallbackValue : raw;
+    candidates.push(await buildNoExeStoredCandidate("local", getNoExeLocalStorageValue(key)));
+    candidates.push(await buildNoExeStoredCandidate("backup", getNoExeLocalStorageValue(NOEXE_STORAGE_BACKUP_KEY)));
+
+    const usable = candidates.filter(function(candidate) {
+        return candidate && candidate.usable;
+    }).sort(function(a, b) {
+        return b.score - a.score;
+    });
+    return usable.length ? usable[0].value : fallbackValue;
 }
 
 async function setNoExeValue(key, value) {
+    setNoExeLocalStorageValue(key, value);
+    setNoExeLocalStorageValue(NOEXE_STORAGE_BACKUP_KEY, value);
     try {
         if (typeof GM_setValue === "function") {
             const result = GM_setValue(key, value);
@@ -150,7 +180,66 @@ async function setNoExeValue(key, value) {
     } catch (e) {
         noExeBusinessLog("保存自改版配置失败，改用 localStorage", e);
     }
-    localStorage.setItem(key, value);
+}
+
+function isNoExeStoredValueUsable(value) {
+    if (value === undefined || value === null) return false;
+    if (typeof value === "string") {
+        const text = value.trim();
+        return !!text && text !== "null" && text !== "undefined";
+    }
+    return typeof value === "object";
+}
+
+async function buildNoExeStoredCandidate(source, value) {
+    return {
+        source,
+        value,
+        usable: isNoExeStoredValueUsable(value),
+        score: getNoExeStoredValueScore(value)
+    };
+}
+
+function getNoExeStoredValueScore(value) {
+    if (!isNoExeStoredValueUsable(value)) return -1;
+    let config = value;
+    if (typeof value === "string") {
+        try {
+            config = JSON.parse(value);
+        } catch (e) {
+            return -1;
+        }
+    }
+    if (!config || typeof config !== "object" || Array.isArray(config)) return -1;
+    const priceConfig = config.priceReviewConfig && typeof config.priceReviewConfig === "object" ? config.priceReviewConfig : config;
+    let score = Array.isArray(config.malls) ? config.malls.length : 0;
+    NOEXE_PRICE_GROUPS.forEach(function(group) {
+        const specGroup = priceConfig[group.key];
+        if (specGroup && typeof specGroup === "object" && !Array.isArray(specGroup)) {
+            score += Object.keys(specGroup).length * 10;
+        }
+    });
+    const multiple = priceConfig.priceMultiple;
+    if (multiple && typeof multiple === "object" && !Array.isArray(multiple)) score += Object.keys(multiple).length;
+    return score;
+}
+
+function getNoExeLocalStorageValue(key) {
+    try {
+        const raw = localStorage.getItem(key);
+        return raw === null ? null : raw;
+    } catch (e) {
+        noExeBusinessLog("读取 localStorage 配置失败", e);
+        return null;
+    }
+}
+
+function setNoExeLocalStorageValue(key, value) {
+    try {
+        localStorage.setItem(key, value);
+    } catch (e) {
+        noExeBusinessLog("保存 localStorage 配置失败", e);
+    }
 }
 
 async function saveNoExeConfig(config, shouldRender) {
@@ -168,22 +257,13 @@ function cloneNoExe(value) {
 function registerNoExeConfigMenu() {
     if (typeof GM_registerMenuCommand !== "function") return;
 
-    GM_registerMenuCommand("自改版：打开可视化配置", openNoExeConfigPanel);
     GM_registerMenuCommand("自改版：打开运行日志", noExeOpenLogPanel);
-    GM_registerMenuCommand("自改版：导出配置JSON", async function() {
-        const config = await loadNoExeConfig();
-        await copyNoExeText(JSON.stringify(config, null, 2));
-    });
-    GM_registerMenuCommand("自改版：重置内置配置", async function() {
-        if (!confirm("确定要重置为空白内置配置？当前修改会被清空。")) return;
-        await setNoExeValue(NOEXE_STORAGE_KEY, JSON.stringify(cloneNoExe(NOEXE_DEFAULT_CONFIG)));
-        alert("已重置为空白内置配置，刷新页面后生效");
-    });
 }
 
 function ensureNoExeConfigButton() {
     const existingHost = document.getElementById(NOEXE_UI_HOST_ID);
     if (existingHost) {
+        if (noExeUiContext && noExeUiContext.root && existingHost.shadowRoot === noExeUiContext.root) return;
         if (existingHost.dataset.noexeUiVersion === NOEXE_UI_VERSION) return;
         existingHost.remove();
     }
@@ -202,6 +282,9 @@ function ensureNoExeConfigButton() {
             group: "normal",
             search: "",
             importText: "",
+            copiedSpec: null,
+            generator: { specName: "", maxPrice: "", minPrice: "", rounds: "" },
+            priceDrafts: {},
             status: "未修改"
         }
     };
@@ -239,10 +322,19 @@ function ensureNoExeConfigButton() {
                 right: 0;
                 width: min(920px, calc(100vw - 28px));
                 height: 100vh;
+                max-height: 100vh;
                 background: #fff;
                 box-shadow: -12px 0 34px rgba(15,23,42,.22);
                 display: flex;
                 flex-direction: column;
+                overflow: hidden;
+            }
+            .noexe-panel-content, .noexe-log-content {
+                display: flex;
+                flex: 1;
+                flex-direction: column;
+                min-height: 0;
+                height: 100%;
             }
             .noexe-head {
                 display: flex;
@@ -286,6 +378,7 @@ function ensureNoExeConfigButton() {
             }
             .noexe-body {
                 flex: 1;
+                min-height: 0;
                 overflow: auto;
                 padding: 16px 18px 18px;
                 background: #f8fafc;
@@ -307,10 +400,68 @@ function ensureNoExeConfigButton() {
                 gap: 10px;
                 margin-bottom: 12px;
             }
+            .noexe-generator {
+                margin-bottom: 12px;
+                padding: 12px;
+                border: 1px solid #e5e7eb;
+                border-radius: 8px;
+                background: #fff;
+            }
+            .noexe-generator-title {
+                margin-bottom: 8px;
+                color: #374151;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            .noexe-generator-row {
+                display: grid;
+                grid-template-columns: minmax(180px, 1.4fr) repeat(3, minmax(110px, 1fr));
+                gap: 10px;
+                align-items: end;
+            }
+            .noexe-generator-row label { min-width: 0; }
+            .noexe-generator-actions {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+                margin-top: 10px;
+            }
+            .noexe-generator-preview {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 6px;
+                min-height: 34px;
+                margin-top: 10px;
+                padding: 8px;
+                border: 1px dashed #cbd5e1;
+                border-radius: 6px;
+                background: #f8fafc;
+                color: #6b7280;
+                font-size: 12px;
+            }
+            .noexe-generator-preview.is-error {
+                border-color: #fecaca;
+                background: #fff7f7;
+                color: #b91c1c;
+            }
+            .noexe-price-chip {
+                padding: 4px 7px;
+                border: 1px solid #e5e7eb;
+                border-radius: 999px;
+                background: #fff;
+                color: #111827;
+                font-size: 12px;
+                font-variant-numeric: tabular-nums;
+            }
             .noexe-btn {
                 background: #111827;
                 border-color: #111827;
                 color: #fff;
+            }
+            .noexe-btn:disabled, .noexe-mini:disabled {
+                opacity: .45;
+                cursor: not-allowed;
             }
             .noexe-btn.secondary {
                 background: #fff;
@@ -385,7 +536,7 @@ function ensureNoExeConfigButton() {
             .noexe-switch input:checked + .noexe-track::after { transform: translateX(16px); }
             .noexe-grid {
                 display: grid;
-                grid-template-columns: repeat(auto-fill, minmax(278px, 1fr));
+                grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
                 gap: 12px;
             }
             .noexe-card {
@@ -396,21 +547,31 @@ function ensureNoExeConfigButton() {
             }
             .noexe-card-head {
                 display: grid;
-                grid-template-columns: 1fr auto;
+                grid-template-columns: 1fr;
                 gap: 8px;
                 align-items: center;
                 margin-bottom: 10px;
             }
+            .noexe-card-actions {
+                display: flex;
+                flex-wrap: wrap;
+                justify-content: flex-start;
+                gap: 6px;
+            }
             .noexe-price-list {
                 display: grid;
-                grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
                 gap: 8px;
             }
             .noexe-price-item {
                 display: grid;
-                grid-template-columns: 24px 1fr 26px;
+                grid-template-columns: 24px minmax(92px, 1fr) 26px;
                 align-items: center;
                 gap: 4px;
+            }
+            .noexe-price-item .noexe-input {
+                min-width: 92px;
+                font-variant-numeric: tabular-nums;
             }
             .noexe-round {
                 color: #6b7280;
@@ -424,6 +585,27 @@ function ensureNoExeConfigButton() {
                 background: #fff;
                 color: #374151;
                 cursor: pointer;
+            }
+            .noexe-mini.text {
+                min-width: 58px;
+                padding: 0 9px;
+                font: 600 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+            }
+            .noexe-mini.primary {
+                background: #fff3eb;
+                border-color: #ff6a00;
+                color: #c2410c;
+            }
+            .noexe-draft-badge {
+                display: inline-flex;
+                align-items: center;
+                min-height: 24px;
+                padding: 0 8px;
+                border-radius: 999px;
+                background: #fff7ed;
+                color: #c2410c;
+                font-size: 12px;
+                font-weight: 700;
             }
             .noexe-empty {
                 padding: 28px;
@@ -537,6 +719,8 @@ function ensureNoExeConfigButton() {
             @media (max-width: 640px) {
                 .noexe-panel { width: 100vw; }
                 .noexe-body { padding: 12px; }
+                .noexe-generator-row { grid-template-columns: 1fr; }
+                .noexe-price-list { grid-template-columns: 1fr; }
                 .noexe-table { min-width: 680px; }
                 .noexe-table-wrap { overflow-x: auto; }
             }
@@ -604,7 +788,7 @@ function noExeRenderPanel() {
         <div class="noexe-head">
             <div>
                 <div class="noexe-title">自改版配置</div>
-                <div class="noexe-subtitle">配置保存在脚本存储里，不依赖下载器 EXE</div>
+                <div class="noexe-subtitle">配置双写到脚本存储和页面本地备份，不依赖下载器 EXE；UI ${escapeNoExe(NOEXE_UI_VERSION)}</div>
             </div>
             <button class="noexe-icon-btn" type="button" data-action="close">×</button>
         </div>
@@ -678,6 +862,8 @@ function renderNoExePrices(config) {
     const state = noExeUiContext.state;
     const groupKey = state.group || "normal";
     const group = config.priceReviewConfig[groupKey] || {};
+    const generator = getNoExeGeneratorState();
+    const generatorPreview = renderNoExeGeneratorPreview();
     const search = (state.search || "").trim().toLowerCase();
     const entries = Object.entries(group).filter(function(entry) {
         return !search || entry[0].toLowerCase().indexOf(search) >= 0;
@@ -689,6 +875,7 @@ function renderNoExePrices(config) {
                 return `<button class="noexe-segment ${groupKey === groupInfo.key ? "is-active" : ""}" type="button" data-action="switch-group" data-group="${groupInfo.key}">${groupInfo.label}</button>`;
             }).join("")}
             <button class="noexe-btn" type="button" data-action="add-spec">新增规格</button>
+            <button class="noexe-btn secondary" type="button" data-action="paste-spec">粘贴规格</button>
         </div>
         <div class="noexe-toolbar">
             <label style="width:170px;">
@@ -701,6 +888,33 @@ function renderNoExePrices(config) {
             </label>
             <span class="noexe-note">报价单位：分；每个数字是一轮报价。</span>
         </div>
+        <div class="noexe-generator">
+            <div class="noexe-generator-title">自动生成阶梯价</div>
+            <div class="noexe-generator-row">
+                <label>
+                    <span class="noexe-note">规格名</span>
+                    <input class="noexe-input" data-input="generator-spec" value="${escapeNoExeAttr(generator.specName)}" placeholder="如 黑色-小包">
+                </label>
+                <label>
+                    <span class="noexe-note">最大价（第 1 轮，元）</span>
+                    <input class="noexe-input" data-input="generator-max" value="${escapeNoExeAttr(generator.maxPrice)}" placeholder="如 13.5">
+                </label>
+                <label>
+                    <span class="noexe-note">最小价（最后一轮，元）</span>
+                    <input class="noexe-input" data-input="generator-min" value="${escapeNoExeAttr(generator.minPrice)}" placeholder="如 8.5">
+                </label>
+                <label>
+                    <span class="noexe-note">轮次</span>
+                    <input class="noexe-input" type="number" min="1" step="1" data-input="generator-rounds" value="${escapeNoExeAttr(generator.rounds)}" placeholder="如 8">
+                </label>
+            </div>
+            <div class="noexe-generator-actions">
+                <button class="noexe-btn" type="button" data-action="save-generator-new">保存为新规格</button>
+                <button class="noexe-btn secondary" type="button" data-action="save-generator-overwrite">覆盖已有规格</button>
+                <button class="noexe-btn secondary" type="button" data-action="save-generator-copy">另存为副本</button>
+            </div>
+            <div class="noexe-generator-preview ${generatorPreview.isError ? "is-error" : ""}" data-generator-preview>${generatorPreview.html}</div>
+        </div>
         ${entries.length ? `<div class="noexe-grid">${entries.map(function(entry) {
             return renderNoExeSpecCard(entry[0], entry[1]);
         }).join("")}</div>` : `<div class="noexe-empty">当前分组没有规格，或搜索无结果。</div>`}
@@ -708,13 +922,16 @@ function renderNoExePrices(config) {
 }
 
 function renderNoExeSpecCard(specName, prices) {
+    const groupKey = noExeUiContext.state.group || "normal";
+    const draft = getNoExeSpecDraft(groupKey, specName, prices);
+    const isDirty = isNoExeSpecDraftDirty(draft, specName, prices);
     const key = encodeURIComponent(specName);
-    const priceInputs = (prices || []).map(function(price, index) {
+    const priceInputs = (draft.prices || []).map(function(price, index) {
         return `
             <div class="noexe-price-item">
                 <span class="noexe-round">${index + 1}</span>
-                <input class="noexe-input" type="number" step="1" data-change="price" data-key="${key}" data-index="${index}" value="${escapeNoExeAttr(price)}">
-                <button class="noexe-mini" type="button" data-action="delete-price" data-key="${key}" data-index="${index}">×</button>
+                <input class="noexe-input" type="number" step="1" data-input="spec-draft-price" data-key="${key}" data-index="${index}" value="${escapeNoExeAttr(price)}">
+                <button class="noexe-mini" type="button" data-action="delete-price-draft" data-key="${key}" data-index="${index}">×</button>
             </div>
         `;
     }).join("");
@@ -722,12 +939,20 @@ function renderNoExeSpecCard(specName, prices) {
     return `
         <article class="noexe-card">
             <div class="noexe-card-head">
-                <input class="noexe-input" data-change="spec-name" data-key="${key}" value="${escapeNoExeAttr(specName)}" placeholder="规格名">
-                <button class="noexe-danger-btn" type="button" data-action="delete-spec" data-key="${key}">删除</button>
+                <input class="noexe-input" data-input="spec-draft-name" data-key="${key}" value="${escapeNoExeAttr(draft.specName)}" placeholder="规格名">
+                <div class="noexe-card-actions">
+                    ${isDirty ? `<span class="noexe-draft-badge">未保存</span>` : ""}
+                    <button class="noexe-mini text primary" type="button" data-action="save-spec-draft" data-key="${key}" ${isDirty ? "" : "disabled"}>保存修改</button>
+                    <button class="noexe-mini text" type="button" data-action="reset-spec-draft" data-key="${key}" ${isDirty ? "" : "disabled"}>撤销</button>
+                    <button class="noexe-mini text" type="button" data-action="copy-spec" data-key="${key}">复制</button>
+                    <button class="noexe-mini text" type="button" data-action="duplicate-spec" data-key="${key}">复制新增</button>
+                    <button class="noexe-danger-btn" type="button" data-action="delete-spec" data-key="${key}">删除</button>
+                </div>
             </div>
             <div class="noexe-price-list">
                 ${priceInputs}
-                <button class="noexe-mini" type="button" data-action="add-price" data-key="${key}">+ 一轮</button>
+                <button class="noexe-mini text primary" type="button" data-action="generate-spec" data-key="${key}">填入生成价</button>
+                <button class="noexe-mini text" type="button" data-action="add-price-draft" data-key="${key}">+ 一轮</button>
             </div>
         </article>
     `;
@@ -805,30 +1030,95 @@ async function noExeHandleClick(event) {
         await saveNoExeConfig(config);
         return;
     }
+    if (action === "save-generator-new" || action === "save-generator-overwrite" || action === "save-generator-copy") {
+        await saveNoExeGeneratedSpec(action.replace("save-generator-", ""));
+        return;
+    }
+    if (action === "copy-spec") {
+        const group = config.priceReviewConfig[noExeUiContext.state.group] || {};
+        const key = decodeURIComponent(button.dataset.key);
+        if (!Array.isArray(group[key])) return;
+        const payload = buildNoExeSpecPayload(key, group[key]);
+        noExeUiContext.state.copiedSpec = payload;
+        await copyNoExeText(JSON.stringify(payload, null, 2));
+        noExeUiContext.state.status = "已复制规格：" + key;
+        noExeSetStatus(noExeUiContext.state.status);
+        return;
+    }
+    if (action === "duplicate-spec") {
+        const group = config.priceReviewConfig[noExeUiContext.state.group] || {};
+        const key = decodeURIComponent(button.dataset.key);
+        if (!Array.isArray(group[key])) return;
+        const copied = buildNoExeSpecPayload(key, group[key]);
+        const newName = getNoExeUniqueSpecName(group, key + "-复制");
+        group[newName] = cloneNoExe(copied.prices);
+        config.priceReviewConfig[noExeUiContext.state.group] = group;
+        noExeUiContext.state.search = "";
+        await saveNoExeConfig(config);
+        return;
+    }
+    if (action === "paste-spec") {
+        const payload = await readNoExeSpecPayloadFromClipboard();
+        if (!payload) {
+            alert("请先复制一个规格，再点粘贴规格");
+            return;
+        }
+        const group = config.priceReviewConfig[noExeUiContext.state.group] || {};
+        const newName = getNoExeUniqueSpecName(group, payload.specName || "粘贴规格");
+        group[newName] = cloneNoExe(payload.prices);
+        config.priceReviewConfig[noExeUiContext.state.group] = group;
+        noExeUiContext.state.search = "";
+        await saveNoExeConfig(config);
+        return;
+    }
     if (action === "delete-spec") {
         const group = config.priceReviewConfig[noExeUiContext.state.group] || {};
         const key = decodeURIComponent(button.dataset.key);
         if (!confirm("确定删除规格：" + key + "？")) return;
         delete group[key];
+        deleteNoExeSpecDraft(noExeUiContext.state.group, key);
         await saveNoExeConfig(config);
         return;
     }
-    if (action === "add-price") {
-        const group = config.priceReviewConfig[noExeUiContext.state.group] || {};
+    if (action === "generate-spec") {
         const key = decodeURIComponent(button.dataset.key);
-        const prices = Array.isArray(group[key]) ? group[key] : [];
-        prices.push(prices.length ? prices[prices.length - 1] : 0);
-        group[key] = prices;
-        await saveNoExeConfig(config);
+        const prices = buildNoExeGeneratedPricesFromUi();
+        if (!prices) return;
+        const draft = getNoExeSpecDraftByKey(noExeUiContext.state.group, key);
+        if (!draft) return;
+        draft.prices = prices.map(function(price) { return String(price); });
+        noExeUiContext.state.status = "已填入生成价，保存后生效";
+        noExeRenderPanel();
         return;
     }
-    if (action === "delete-price") {
-        const group = config.priceReviewConfig[noExeUiContext.state.group] || {};
+    if (action === "save-spec-draft") {
+        const key = decodeURIComponent(button.dataset.key);
+        await saveNoExeSpecDraft(noExeUiContext.state.group, key);
+        return;
+    }
+    if (action === "reset-spec-draft") {
+        const key = decodeURIComponent(button.dataset.key);
+        deleteNoExeSpecDraft(noExeUiContext.state.group, key);
+        noExeRenderPanel();
+        return;
+    }
+    if (action === "add-price-draft") {
+        const key = decodeURIComponent(button.dataset.key);
+        const draft = getNoExeSpecDraftByKey(noExeUiContext.state.group, key);
+        if (!draft) return;
+        const prices = Array.isArray(draft.prices) ? draft.prices : [];
+        prices.push(prices.length ? prices[prices.length - 1] : "0");
+        draft.prices = prices;
+        noExeRenderPanel();
+        return;
+    }
+    if (action === "delete-price-draft") {
         const key = decodeURIComponent(button.dataset.key);
         const index = Number(button.dataset.index);
-        if (!Array.isArray(group[key])) return;
-        group[key].splice(index, 1);
-        await saveNoExeConfig(config);
+        const draft = getNoExeSpecDraftByKey(noExeUiContext.state.group, key);
+        if (!draft || !Array.isArray(draft.prices)) return;
+        draft.prices.splice(index, 1);
+        noExeRenderPanel();
         return;
     }
     if (action === "copy-export") {
@@ -845,6 +1135,7 @@ async function noExeHandleClick(event) {
         if (!confirm("确定重置为脚本内置配置？当前修改会被覆盖。")) return;
         noExeUiContext.config = cloneNoExe(NOEXE_DEFAULT_CONFIG);
         noExeUiContext.state.importText = "";
+        noExeUiContext.state.priceDrafts = {};
         await saveNoExeConfig(noExeUiContext.config);
     }
 }
@@ -860,6 +1151,35 @@ function noExeHandleInput(event) {
         noExeUiContext.state.search = input.value;
         clearTimeout(noExeUiContext.searchTimer);
         noExeUiContext.searchTimer = setTimeout(noExeRenderPanel, 180);
+        return;
+    }
+    if (input.dataset.input === "generator-spec" || input.dataset.input === "generator-max" || input.dataset.input === "generator-min" || input.dataset.input === "generator-rounds") {
+        const generator = getNoExeGeneratorState();
+        if (input.dataset.input === "generator-spec") generator.specName = input.value;
+        if (input.dataset.input === "generator-max") generator.maxPrice = input.value;
+        if (input.dataset.input === "generator-min") generator.minPrice = input.value;
+        if (input.dataset.input === "generator-rounds") generator.rounds = input.value;
+        updateNoExeGeneratorPreview();
+        return;
+    }
+    if (input.dataset.input === "spec-draft-name") {
+        const key = decodeURIComponent(input.dataset.key);
+        const draft = getNoExeSpecDraftByKey(noExeUiContext.state.group, key);
+        if (draft) draft.specName = input.value;
+        markNoExeSpecCardDirty(input);
+        noExeUiContext.state.status = "有未保存修改";
+        noExeSetStatus(noExeUiContext.state.status);
+        return;
+    }
+    if (input.dataset.input === "spec-draft-price") {
+        const key = decodeURIComponent(input.dataset.key);
+        const index = Number(input.dataset.index);
+        const draft = getNoExeSpecDraftByKey(noExeUiContext.state.group, key);
+        if (draft && Array.isArray(draft.prices)) draft.prices[index] = input.value;
+        markNoExeSpecCardDirty(input);
+        noExeUiContext.state.status = "有未保存修改";
+        noExeSetStatus(noExeUiContext.state.status);
+        return;
     }
 }
 
@@ -923,39 +1243,6 @@ async function noExeHandleChange(event) {
         await saveNoExeConfig(config);
         return;
     }
-
-    const group = config.priceReviewConfig[noExeUiContext.state.group] || {};
-    if (change === "spec-name") {
-        const oldKey = decodeURIComponent(input.dataset.key);
-        const newKey = input.value.trim();
-        if (!newKey) {
-            alert("规格名不能为空");
-            noExeRenderPanel();
-            return;
-        }
-        if (newKey !== oldKey && Object.prototype.hasOwnProperty.call(group, newKey)) {
-            alert("规格名已经存在");
-            noExeRenderPanel();
-            return;
-        }
-        renameNoExeSpec(group, oldKey, newKey);
-        await saveNoExeConfig(config);
-        return;
-    }
-
-    if (change === "price") {
-        const key = decodeURIComponent(input.dataset.key);
-        const index = Number(input.dataset.index);
-        const value = Number(input.value);
-        if (!Number.isFinite(value) || !Number.isInteger(value)) {
-            alert("报价必须是整数，单位是分");
-            noExeRenderPanel();
-            return;
-        }
-        if (!Array.isArray(group[key])) group[key] = [];
-        group[key][index] = value;
-        await saveNoExeConfig(config, false);
-    }
 }
 
 async function importNoExeConfig(shouldMerge) {
@@ -965,6 +1252,7 @@ async function importNoExeConfig(shouldMerge) {
         const imported = normalizeNoExeConfig(JSON.parse(text));
         noExeUiContext.config = shouldMerge ? mergeNoExeConfig(noExeUiContext.config, imported) : imported;
         noExeUiContext.state.importText = "";
+        noExeUiContext.state.priceDrafts = {};
         await saveNoExeConfig(noExeUiContext.config);
     } catch (e) {
         alert("导入失败：" + e.message);
@@ -1007,6 +1295,240 @@ function getNoExeUniqueSpecName(group, baseName) {
     return name;
 }
 
+function getNoExeGeneratorState() {
+    if (!noExeUiContext) return { specName: "", maxPrice: "", minPrice: "", rounds: "" };
+    if (!noExeUiContext.state.generator) {
+        noExeUiContext.state.generator = { specName: "", maxPrice: "", minPrice: "", rounds: "" };
+    }
+    if (noExeUiContext.state.generator.specName === undefined) noExeUiContext.state.generator.specName = "";
+    if (noExeUiContext.state.generator.maxPrice === undefined) noExeUiContext.state.generator.maxPrice = "";
+    if (noExeUiContext.state.generator.minPrice === undefined) noExeUiContext.state.generator.minPrice = "";
+    if (noExeUiContext.state.generator.rounds === undefined) noExeUiContext.state.generator.rounds = "";
+    return noExeUiContext.state.generator;
+}
+
+function renderNoExeGeneratorPreview() {
+    const generator = getNoExeGeneratorState();
+    const hasInput = String(generator.maxPrice || "").trim() || String(generator.minPrice || "").trim() || String(generator.rounds || "").trim();
+    if (!hasInput) {
+        return { isError: false, html: `<span>填写价格和轮次后预览生成结果</span>` };
+    }
+    const result = buildNoExeGeneratedPriceResult(generator);
+    if (result.error) {
+        return { isError: true, html: escapeNoExe(result.error) };
+    }
+    return {
+        isError: false,
+        html: result.prices.map(function(price, index) {
+            return `<span class="noexe-price-chip">${index + 1}：${escapeNoExe(price)}</span>`;
+        }).join("")
+    };
+}
+
+function updateNoExeGeneratorPreview() {
+    if (!noExeUiContext || !noExeUiContext.root) return;
+    const previewNode = noExeUiContext.root.querySelector("[data-generator-preview]");
+    if (!previewNode) return;
+    const preview = renderNoExeGeneratorPreview();
+    previewNode.classList.toggle("is-error", !!preview.isError);
+    previewNode.innerHTML = preview.html;
+}
+
+function getNoExeGeneratorSpecName(shouldAlert) {
+    const specName = String(getNoExeGeneratorState().specName || "").trim();
+    if (!specName && shouldAlert !== false) return alertAndReturnNoExe("请先填写规格名");
+    return specName;
+}
+
+async function saveNoExeGeneratedSpec(mode) {
+    const specName = getNoExeGeneratorSpecName();
+    if (!specName) return;
+    const prices = buildNoExeGeneratedPricesFromUi();
+    if (!prices) return;
+    const groupKey = noExeUiContext.state.group || "normal";
+    const config = noExeUiContext.config;
+    const group = config.priceReviewConfig[groupKey] || {};
+    const exists = Object.prototype.hasOwnProperty.call(group, specName);
+    let targetName = specName;
+    if (mode === "new" && exists) {
+        alert("规格名已经存在，可点“覆盖已有规格”或“另存为副本”");
+        return;
+    }
+    if (mode === "copy") {
+        targetName = getNoExeUniqueSpecName(group, specName + "-副本");
+    }
+    group[targetName] = prices;
+    config.priceReviewConfig[groupKey] = group;
+    getNoExeGeneratorState().specName = targetName;
+    deleteNoExeSpecDraft(groupKey, targetName);
+    noExeUiContext.state.search = "";
+    await saveNoExeConfig(config);
+}
+
+function buildNoExeSpecPayload(specName, prices) {
+    return {
+        type: "noexe-price-spec-v1",
+        specName: String(specName || ""),
+        prices: Array.isArray(prices) ? prices.map(function(price) {
+            return Number(price);
+        }).filter(function(price) {
+            return Number.isFinite(price);
+        }) : []
+    };
+}
+
+function getNoExeDraftGroup(groupKey) {
+    if (!noExeUiContext.state.priceDrafts) noExeUiContext.state.priceDrafts = {};
+    if (!noExeUiContext.state.priceDrafts[groupKey]) noExeUiContext.state.priceDrafts[groupKey] = {};
+    return noExeUiContext.state.priceDrafts[groupKey];
+}
+
+function buildNoExeSpecDraft(specName, prices) {
+    return {
+        specName: String(specName || ""),
+        prices: Array.isArray(prices) ? prices.map(function(price) {
+            return String(price);
+        }) : []
+    };
+}
+
+function getNoExeSpecDraft(groupKey, specName, prices) {
+    const drafts = getNoExeDraftGroup(groupKey);
+    if (!drafts[specName]) drafts[specName] = buildNoExeSpecDraft(specName, prices);
+    return drafts[specName];
+}
+
+function getNoExeSpecDraftByKey(groupKey, specName) {
+    const config = noExeUiContext.config || {};
+    const priceConfig = config.priceReviewConfig || {};
+    const group = priceConfig[groupKey] || {};
+    if (!Object.prototype.hasOwnProperty.call(group, specName)) return null;
+    return getNoExeSpecDraft(groupKey, specName, group[specName]);
+}
+
+function deleteNoExeSpecDraft(groupKey, specName) {
+    if (!noExeUiContext || !noExeUiContext.state.priceDrafts || !noExeUiContext.state.priceDrafts[groupKey]) return;
+    delete noExeUiContext.state.priceDrafts[groupKey][specName];
+}
+
+function markNoExeSpecCardDirty(input) {
+    const card = input && input.closest ? input.closest(".noexe-card") : null;
+    if (!card) return;
+    card.querySelectorAll('[data-action="save-spec-draft"], [data-action="reset-spec-draft"]').forEach(function(button) {
+        button.disabled = false;
+    });
+    const actions = card.querySelector(".noexe-card-actions");
+    if (actions && !actions.querySelector(".noexe-draft-badge")) {
+        actions.insertAdjacentHTML("afterbegin", `<span class="noexe-draft-badge">未保存</span>`);
+    }
+}
+
+function isNoExeSpecDraftDirty(draft, specName, prices) {
+    if (!draft) return false;
+    if (String(draft.specName || "") !== String(specName || "")) return true;
+    const savedPrices = Array.isArray(prices) ? prices.map(function(price) { return String(price); }) : [];
+    const draftPrices = Array.isArray(draft.prices) ? draft.prices.map(function(price) { return String(price).trim(); }) : [];
+    if (savedPrices.length !== draftPrices.length) return true;
+    return savedPrices.some(function(price, index) {
+        return price !== draftPrices[index];
+    });
+}
+
+function parseNoExeDraftPrices(draft) {
+    const prices = Array.isArray(draft.prices) ? draft.prices : [];
+    if (!prices.length) return { error: "至少保留一轮报价" };
+    const parsed = [];
+    for (let index = 0; index < prices.length; index += 1) {
+        const text = String(prices[index]).trim();
+        const value = Number(text);
+        if (!text || !Number.isFinite(value) || !Number.isInteger(value)) {
+            return { error: "第 " + (index + 1) + " 轮报价必须是整数，单位是分" };
+        }
+        parsed.push(value);
+    }
+    return { prices: parsed };
+}
+
+async function saveNoExeSpecDraft(groupKey, oldKey) {
+    const config = noExeUiContext.config;
+    const group = config.priceReviewConfig[groupKey] || {};
+    const draft = getNoExeSpecDraftByKey(groupKey, oldKey);
+    if (!draft) return;
+    const newKey = String(draft.specName || "").trim();
+    if (!newKey) return alert("规格名不能为空");
+    if (newKey !== oldKey && Object.prototype.hasOwnProperty.call(group, newKey)) {
+        return alert("规格名已经存在");
+    }
+    const parsed = parseNoExeDraftPrices(draft);
+    if (parsed.error) return alert(parsed.error);
+    delete group[oldKey];
+    group[newKey] = parsed.prices;
+    config.priceReviewConfig[groupKey] = group;
+    deleteNoExeSpecDraft(groupKey, oldKey);
+    deleteNoExeSpecDraft(groupKey, newKey);
+    await saveNoExeConfig(config);
+}
+
+function buildNoExeGeneratedPricesFromUi() {
+    const result = buildNoExeGeneratedPriceResult(getNoExeGeneratorState());
+    if (result.error) return alertAndReturnNoExe(result.error);
+    return result.prices;
+}
+
+function buildNoExeGeneratedPriceResult(generator) {
+    const maxPrice = parseNoExeGeneratorPrice(generator.maxPrice);
+    const minPrice = parseNoExeGeneratorPrice(generator.minPrice);
+    const rounds = Number(generator.rounds);
+    if (!Number.isInteger(maxPrice) || maxPrice <= 0) return { error: "请先填写大于 0 的最大价，单位是元" };
+    if (!Number.isInteger(minPrice) || minPrice <= 0) return { error: "请先填写大于 0 的最小价，单位是元" };
+    if (!Number.isInteger(rounds) || rounds <= 0) return { error: "请先填写正整数轮次" };
+    if (maxPrice < minPrice) return { error: "最大价不能小于最小价" };
+    const prices = [];
+    if (rounds === 1) return { prices: [maxPrice] };
+    for (let index = 0; index < rounds; index += 1) {
+        if (index === 0) prices.push(maxPrice);
+        else if (index === rounds - 1) prices.push(minPrice);
+        else {
+            const value = Math.round(maxPrice - ((maxPrice - minPrice) * index / (rounds - 1)));
+            prices.push(value);
+        }
+    }
+    return { prices };
+}
+
+function parseNoExeGeneratorPrice(value) {
+    const text = String(value === undefined || value === null ? "" : value).trim();
+    if (!text) return NaN;
+    const normalized = text.replace(/￥/g, "").replace(/元/g, "").trim();
+    if (!/^\d+(?:\.\d+)?$/.test(normalized)) return NaN;
+    const numberValue = Number(normalized);
+    if (!Number.isFinite(numberValue)) return NaN;
+    return Math.round(numberValue * 100);
+}
+
+async function readNoExeSpecPayloadFromClipboard() {
+    if (noExeUiContext && noExeUiContext.state.copiedSpec && Array.isArray(noExeUiContext.state.copiedSpec.prices)) {
+        return cloneNoExe(noExeUiContext.state.copiedSpec);
+    }
+    try {
+        if (navigator.clipboard && navigator.clipboard.readText) {
+            const text = (await navigator.clipboard.readText()).trim();
+            if (!text) return null;
+            const parsed = JSON.parse(text);
+            if (parsed && parsed.type === "noexe-price-spec-v1" && Array.isArray(parsed.prices)) return buildNoExeSpecPayload(parsed.specName, parsed.prices);
+            if (parsed && typeof parsed === "object" && Array.isArray(parsed.prices)) return buildNoExeSpecPayload(parsed.specName || "粘贴规格", parsed.prices);
+        }
+    } catch (e) {
+        noExeBusinessLog("读取剪贴板规格失败", e);
+    }
+    return null;
+}
+
+function alertAndReturnNoExe(message) {
+    alert(message);
+    return null;
+}
+
 function getNoExeDuplicateMallIds(malls) {
     const seen = new Set();
     const duplicates = new Set();
@@ -1021,6 +1543,7 @@ function getNoExeDuplicateMallIds(malls) {
 
 function noExeSetStatus(text) {
     if (!noExeUiContext) return;
+    noExeUiContext.state.status = text;
     const status = noExeUiContext.root.querySelector(".noexe-status");
     if (status) status.textContent = text;
 }
@@ -1567,7 +2090,6 @@ async function postTemu(url, data) {
 }
 
 registerNoExeConfigMenu();
-ensureNoExeConfigButton();
 
 
 
