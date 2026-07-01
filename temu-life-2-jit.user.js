@@ -4,7 +4,7 @@
 // @description  开通JIT（自改版，无需下载器EXE，带可视化配置、接口日志和业务明细）
 // @author       TonyTonyYang
 // @match        https://agentseller.temu.com/newon/product-select*
-// @version      2026.0701.1
+// @version      2026.0701.2
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
@@ -15,7 +15,7 @@
 
 const NOEXE_STORAGE_KEY = "goldabcd_noexe_config_v1";
 const NOEXE_STORAGE_BACKUP_KEY = "goldabcd_noexe_config_v1_local_backup";
-const NOEXE_UI_VERSION = "2026.0701.1";
+const NOEXE_UI_VERSION = "2026.0701.2";
 const NOEXE_DEFAULT_CONFIG = {
     "version": 1,
     "malls": [],
@@ -256,9 +256,7 @@ function cloneNoExe(value) {
 }
 
 function registerNoExeConfigMenu() {
-    if (typeof GM_registerMenuCommand !== "function") return;
-
-    GM_registerMenuCommand("自改版：打开运行日志", noExeOpenLogPanel);
+    return;
 }
 
 function ensureNoExeConfigButton() {
@@ -759,8 +757,6 @@ function ensureNoExeConfigButton() {
     root.addEventListener("change", noExeHandleChange);
     root.addEventListener("input", noExeHandleInput);
     root.addEventListener("input", noExeHandleLogInput);
-    window.addEventListener(NOEXE_UI_OPEN_EVENT, noExeOpenUi);
-    window.addEventListener(NOEXE_LOG_OPEN_EVENT, noExeOpenLogPanel);
     window.addEventListener(NOEXE_LOG_EVENT, noExeReceiveLogEvent);
 }
 
