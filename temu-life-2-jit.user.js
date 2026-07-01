@@ -4,7 +4,7 @@
 // @description  开通JIT（自改版，无需下载器EXE，带可视化配置、接口日志和业务明细）
 // @author       TonyTonyYang
 // @match        https://agentseller.temu.com/newon/product-select*
-// @version      2026.0616.1
+// @version      2026.0701.1
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
@@ -15,7 +15,7 @@
 
 const NOEXE_STORAGE_KEY = "goldabcd_noexe_config_v1";
 const NOEXE_STORAGE_BACKUP_KEY = "goldabcd_noexe_config_v1_local_backup";
-const NOEXE_UI_VERSION = "2026.0616.1";
+const NOEXE_UI_VERSION = "2026.0701.1";
 const NOEXE_DEFAULT_CONFIG = {
     "version": 1,
     "malls": [],
@@ -54,6 +54,7 @@ let noExeLogState = {
     stats: { total: 0, success: 0, fail: 0, apiError: 0, inFlight: 0, detail: 0 },
     active: {},
     filter: "all",
+    searchText: "",
     entries: []
 };
 
@@ -706,6 +707,12 @@ function ensureNoExeConfigButton() {
                 line-height: 1.45;
                 word-break: break-all;
             }
+            .noexe-log-search {
+                display: grid;
+                grid-template-columns: minmax(0, 1fr) auto;
+                gap: 8px;
+                width: 100%;
+            }
             .noexe-log-message {
                 margin-top: 6px;
                 color: #374151;
@@ -751,6 +758,7 @@ function ensureNoExeConfigButton() {
     root.addEventListener("click", noExeHandleLogClick);
     root.addEventListener("change", noExeHandleChange);
     root.addEventListener("input", noExeHandleInput);
+    root.addEventListener("input", noExeHandleLogInput);
     window.addEventListener(NOEXE_UI_OPEN_EVENT, noExeOpenUi);
     window.addEventListener(NOEXE_LOG_OPEN_EVENT, noExeOpenLogPanel);
     window.addEventListener(NOEXE_LOG_EVENT, noExeReceiveLogEvent);
@@ -1762,17 +1770,34 @@ function noExeEntryMatchesLogFilter(entry, filterKey) {
     return String(entry && entry.scriptName || "").indexOf(filter.match) >= 0;
 }
 
+function noExeEntryMatchesLogSearch(entry, searchText) {
+    const keyword = String(searchText || "").trim().toLowerCase();
+    if (!keyword) return true;
+    const haystack = [
+        entry && entry.message,
+        entry && entry.endpoint,
+        entry && entry.endpointTitle,
+        entry && entry.scriptName,
+        entry && entry.source
+    ].map(function(item) {
+        return String(item || "").toLowerCase();
+    }).join("\n");
+    return haystack.indexOf(keyword) >= 0;
+}
+
 function noExeGetFilteredLogEntries() {
     const filterKey = noExeLogState.filter || "all";
+    const searchText = noExeLogState.searchText || "";
     return noExeLogState.entries.filter(function(entry) {
-        return noExeEntryMatchesLogFilter(entry, filterKey);
+        return noExeEntryMatchesLogFilter(entry, filterKey) && noExeEntryMatchesLogSearch(entry, searchText);
     });
 }
 
 function noExeGetFilteredActiveLogs() {
     const filterKey = noExeLogState.filter || "all";
+    const searchText = noExeLogState.searchText || "";
     return Object.values(noExeLogState.active).filter(function(entry) {
-        return noExeEntryMatchesLogFilter(entry, filterKey);
+        return noExeEntryMatchesLogFilter(entry, filterKey) && noExeEntryMatchesLogSearch(entry, searchText);
     });
 }
 
@@ -1810,6 +1835,17 @@ function noExeRenderLogFilters() {
         return `<button class="noexe-segment ${item.key === current ? "is-active" : ""}" type="button" data-log-filter="${escapeNoExeAttr(item.key)}">${escapeNoExe(item.label)}${count ? " " + escapeNoExe(count) : ""}</button>`;
     }).join("");
 }
+
+function noExeRenderLogSearchBar() {
+    const searchText = String(noExeLogState.searchText || "");
+    return `
+        <div class="noexe-log-search">
+            <input class="noexe-input" type="text" data-log-input="search" value="${escapeNoExeAttr(searchText)}" placeholder="搜索 SKU / 规格 / 关键词">
+            <button class="noexe-btn secondary" type="button" data-log-action="clear-search"${searchText ? "" : " disabled"}>清空搜索</button>
+        </div>
+    `;
+}
+
 function noExeRenderLogPanel() {
     if (!noExeUiContext) return;
     const allEntries = noExeGetFilteredLogEntries();
@@ -1817,6 +1853,8 @@ function noExeRenderLogPanel() {
     const activeList = noExeGetFilteredActiveLogs();
     const stats = noExeGetLogStatsForFilter(allEntries, activeList);
     const selectedFilter = noExeGetLogFilter(noExeLogState.filter || "all");
+    const searchText = String(noExeLogState.searchText || "").trim();
+    const searchNote = searchText ? `；搜索词：${searchText}` : "";
     const limitNote = allEntries.length > entries.length ? `当前只显示最近 ${entries.length}/${allEntries.length} 条，复制日志包含当前筛选全部日志。` : `当前显示 ${entries.length}/${allEntries.length} 条。`;
     const content = noExeUiContext.root.querySelector(".noexe-log-content");
     if (!content) return;
@@ -1825,7 +1863,7 @@ function noExeRenderLogPanel() {
         <div class="noexe-head">
             <div>
                 <div class="noexe-title">运行日志</div>
-                <div class="noexe-subtitle">当前筛选：${escapeNoExe(selectedFilter.label)}；请求成功只代表 TEMU 接口正常返回，不等于整批任务全部完成</div>
+                <div class="noexe-subtitle">当前筛选：${escapeNoExe(selectedFilter.label)}${escapeNoExe(searchNote)}；请求成功只代表 TEMU 接口正常返回，不等于整批任务全部完成</div>
             </div>
             <button class="noexe-icon-btn" type="button" data-log-action="close">×</button>
         </div>
@@ -1840,6 +1878,9 @@ function noExeRenderLogPanel() {
             </div>
             <div class="noexe-toolbar">
                 ${noExeRenderLogFilters()}
+            </div>
+            <div class="noexe-toolbar">
+                ${noExeRenderLogSearchBar()}
             </div>
             <div class="noexe-toolbar">
                 <button class="noexe-btn" type="button" data-log-action="copy">复制当前筛选日志</button>
@@ -1890,6 +1931,11 @@ function noExeHandleLogClick(event) {
     if (!button) return;
     const action = button.dataset.logAction;
     if (action === "close") return noExeCloseLogPanel();
+    if (action === "clear-search") {
+        noExeLogState.searchText = "";
+        noExeRenderLogPanel();
+        return;
+    }
     if (action === "copy") {
         copyNoExeText(noExeBuildLogText());
         return;
@@ -1902,12 +1948,21 @@ function noExeHandleLogClick(event) {
         noExeRenderLogPanel();
     }
 }
+
+function noExeHandleLogInput(event) {
+    const input = event.target.closest("[data-log-input='search']");
+    if (!input) return;
+    noExeLogState.searchText = input.value || "";
+    noExeRenderLogPanel();
+}
+
 function noExeBuildLogText() {
     const entries = noExeGetFilteredLogEntries();
     const activeList = noExeGetFilteredActiveLogs();
     const stats = noExeGetLogStatsForFilter(entries, activeList);
     const selectedFilter = noExeGetLogFilter(noExeLogState.filter || "all");
-    const header = `筛选:${selectedFilter.label} 处理数量:${stats.total} 请求成功:${stats.success} 业务失败:${stats.fail} 接口异常:${stats.apiError} 业务明细:${stats.detail || 0} 进行中:${stats.inFlight}`;
+    const searchText = String(noExeLogState.searchText || "").trim();
+    const header = `筛选:${selectedFilter.label}${searchText ? ` 搜索:${searchText}` : ""} 处理数量:${stats.total} 请求成功:${stats.success} 业务失败:${stats.fail} 接口异常:${stats.apiError} 业务明细:${stats.detail || 0} 进行中:${stats.inFlight}`;
     const lines = entries.map(function(entry) {
         const label = entry.type === "success" ? "请求成功" : entry.type === "fail" ? "业务失败" : entry.type === "detail" ? "业务明细" : entry.type === "detail-error" ? "业务异常" : "接口异常";
         return `[${new Date(entry.time).toLocaleString()}] [${label}] [${entry.scriptName}] [${entry.endpointTitle || entry.endpoint}] ${entry.endpoint} ${entry.duration}ms ${entry.message || ""}`;
