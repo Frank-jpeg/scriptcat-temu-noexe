@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         TEMU商品列表导出
 // @namespace    https://tampermonkey.net/
-// @version      8.5.0
+// @version      8.5.1
 // @description  独立浮窗导出当前筛选结果的商品列表信息，支持导出字段勾选、SKU体积重量与右侧极简收起。
 // @match        https://agentseller.temu.com/goods/list*
-// @downloadURL  https://raw.githubusercontent.com/jianpanlan0-svg/scriptcat-temu-noexe/main/TEMU%E5%95%86%E5%93%81%E5%88%97%E8%A1%A8%E5%AF%BC%E5%87%BA.user.js
-// @updateURL    https://raw.githubusercontent.com/jianpanlan0-svg/scriptcat-temu-noexe/main/TEMU%E5%95%86%E5%93%81%E5%88%97%E8%A1%A8%E5%AF%BC%E5%87%BA.user.js
+// @downloadURL  https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/TEMU%E5%95%86%E5%93%81%E5%88%97%E8%A1%A8%E5%AF%BC%E5%87%BA.user.js
+// @updateURL    https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/TEMU%E5%95%86%E5%93%81%E5%88%97%E8%A1%A8%E5%AF%BC%E5%87%BA.user.js
 // @grant        none
 // ==/UserScript==
 

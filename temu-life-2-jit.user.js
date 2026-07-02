@@ -4,18 +4,18 @@
 // @description  开通JIT（自改版，无需下载器EXE，带可视化配置、接口日志和业务明细）
 // @author       TonyTonyYang
 // @match        https://agentseller.temu.com/newon/product-select*
-// @version      2026.0701.2
+// @version      2026.0702.1
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
 // @grant        GM_setClipboard
-// @updateURL    https://raw.githubusercontent.com/jianpanlan0-svg/scriptcat-temu-noexe/main/temu-life-2-jit.user.js
-// @downloadURL  https://raw.githubusercontent.com/jianpanlan0-svg/scriptcat-temu-noexe/main/temu-life-2-jit.user.js
+// @updateURL    https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temu-life-2-jit.user.js
+// @downloadURL  https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temu-life-2-jit.user.js
 // ==/UserScript==
 
 const NOEXE_STORAGE_KEY = "goldabcd_noexe_config_v1";
 const NOEXE_STORAGE_BACKUP_KEY = "goldabcd_noexe_config_v1_local_backup";
-const NOEXE_UI_VERSION = "2026.0701.2";
+const NOEXE_UI_VERSION = "2026.0702.1";
 const NOEXE_DEFAULT_CONFIG = {
     "version": 1,
     "malls": [],
@@ -2262,4 +2262,3 @@ registerNoExeConfigMenu();
         }
     }
 })();
-

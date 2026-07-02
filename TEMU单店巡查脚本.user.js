@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEMU单店巡查脚本
 // @namespace    https://local.temu.single.inspector
-// @version      1.8.8
+// @version      1.8.9
 // @description  单店铺 TEMU 巡查：抽检结果、JIT 逾期、合规中心、违规信息、VMI 未收货、价格申报、退货包裹、资金余额
 // @match        https://agentseller.temu.com/*
 // @match        https://seller.kuajingmaihuo.com/*
@@ -10,8 +10,8 @@
 // @grant        GM_deleteValue
 // @grant        GM_registerMenuCommand
 // @run-at       document-idle
-// @downloadURL  https://raw.githubusercontent.com/jianpanlan0-svg/scriptcat-temu-noexe/main/TEMU%E5%8D%95%E5%BA%97%E5%B7%A1%E6%9F%A5%E8%84%9A%E6%9C%AC.user.js
-// @updateURL    https://raw.githubusercontent.com/jianpanlan0-svg/scriptcat-temu-noexe/main/TEMU%E5%8D%95%E5%BA%97%E5%B7%A1%E6%9F%A5%E8%84%9A%E6%9C%AC.user.js
+// @downloadURL  https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/TEMU%E5%8D%95%E5%BA%97%E5%B7%A1%E6%9F%A5%E8%84%9A%E6%9C%AC.user.js
+// @updateURL    https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/TEMU%E5%8D%95%E5%BA%97%E5%B7%A1%E6%9F%A5%E8%84%9A%E6%9C%AC.user.js
 // ==/UserScript==
 
 (function () {

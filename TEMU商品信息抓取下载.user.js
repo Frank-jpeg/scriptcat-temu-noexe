@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Temu 商品信息抓取下载 GitHub更新版
 // @namespace    https://bbs.tampermonkey.net.cn/
-// @version      4.29.3
+// @version      4.29.4
 // @description  批量抓取 Temu 商品（支持多币种价格/销量筛选、生成销量TXT统计、中文/英文销量识别、JPG/PNG可选、原始字节下载、自动跳过推荐区、并发下载、自定义间隔）
 // @author       Gemini
 // @match        https://www.temu.com/*
@@ -13,14 +13,14 @@
 // @grant        GM_getValue
 // @connect      *
 // @connect      api.github.com
-// @downloadURL  https://raw.githubusercontent.com/jianpanlan0-svg/scriptcat-temu-noexe/main/TEMU%E5%95%86%E5%93%81%E4%BF%A1%E6%81%AF%E6%8A%93%E5%8F%96%E4%B8%8B%E8%BD%BD.user.js
-// @updateURL    https://raw.githubusercontent.com/jianpanlan0-svg/scriptcat-temu-noexe/main/TEMU%E5%95%86%E5%93%81%E4%BF%A1%E6%81%AF%E6%8A%93%E5%8F%96%E4%B8%8B%E8%BD%BD.user.js
+// @downloadURL  https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/TEMU%E5%95%86%E5%93%81%E4%BF%A1%E6%81%AF%E6%8A%93%E5%8F%96%E4%B8%8B%E8%BD%BD.user.js
+// @updateURL    https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/TEMU%E5%95%86%E5%93%81%E4%BF%A1%E6%81%AF%E6%8A%93%E5%8F%96%E4%B8%8B%E8%BD%BD.user.js
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '4.29.3';
+    const SCRIPT_VERSION = '4.29.4';
     const STORAGE_KEY = 'TEMU_SCRAPED_SHOPS_STORAGE';
     const IMAGE_FORMAT_KEY = 'TEMU_IMAGE_FORMAT';
     const BACKUP_TIME_KEY = 'TEMU_SCRAPED_SHOPS_LAST_BACKUP_TIME';

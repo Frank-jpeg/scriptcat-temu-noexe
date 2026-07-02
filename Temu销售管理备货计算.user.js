@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         Temu 销售管理备货计算
 // @namespace    http://tampermonkey.net/
-// @version      2026.0521.4
+// @version      2026.0702.1
 // @description  在 Temu 销售管理页按近7天销量、备货天数、仓内可用库存和已发货库存计算每个颜色/SKU需要备货的数量
 // @author       Codex
 // @match        https://agentseller.temu.com/stock/fully-mgt/sale-manage/main*
-// @updateURL    https://raw.githubusercontent.com/jianpanlan0-svg/scriptcat-temu-noexe/main/Temu%E9%94%80%E5%94%AE%E7%AE%A1%E7%90%86%E5%A4%87%E8%B4%A7%E8%AE%A1%E7%AE%97.user.js
-// @downloadURL  https://raw.githubusercontent.com/jianpanlan0-svg/scriptcat-temu-noexe/main/Temu%E9%94%80%E5%94%AE%E7%AE%A1%E7%90%86%E5%A4%87%E8%B4%A7%E8%AE%A1%E7%AE%97.user.js
+// @updateURL    https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/Temu%E9%94%80%E5%94%AE%E7%AE%A1%E7%90%86%E5%A4%87%E8%B4%A7%E8%AE%A1%E7%AE%97.user.js
+// @downloadURL  https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/Temu%E9%94%80%E5%94%AE%E7%AE%A1%E7%90%86%E5%A4%87%E8%B4%A7%E8%AE%A1%E7%AE%97.user.js
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
