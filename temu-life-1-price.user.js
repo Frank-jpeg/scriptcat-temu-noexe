@@ -4,7 +4,7 @@
 // @description  提交核价（自改版，无需下载器EXE，带可视化配置、接口日志和业务明细）
 // @author       TonyTonyYang
 // @match        https://agentseller.temu.com/newon/product-select*
-// @version      2026.0702.1
+// @version      2026.0702.2
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
@@ -15,7 +15,7 @@
 
 const NOEXE_STORAGE_KEY = "goldabcd_noexe_config_v1";
 const NOEXE_STORAGE_BACKUP_KEY = "goldabcd_noexe_config_v1_local_backup";
-const NOEXE_UI_VERSION = "2026.0702.1";
+const NOEXE_UI_VERSION = "2026.0702.2";
 const NOEXE_DEFAULT_CONFIG = {
     "version": 1,
     "malls": [],
@@ -294,7 +294,7 @@ function ensureNoExeConfigButton() {
             search: "",
             importText: "",
             copiedSpec: null,
-            generator: { specName: "", maxPrice: "", minPrice: "", rounds: "" },
+            generator: { specName: "", maxPrice: "", minPrice: "", rounds: "", batchSpecNames: "" },
             priceDrafts: {},
             status: "未修改"
         }
@@ -436,6 +436,12 @@ function ensureNoExeConfigButton() {
                 flex-wrap: wrap;
                 gap: 8px;
                 margin-top: 10px;
+            }
+            .noexe-generator-batch {
+                margin-top: 10px;
+            }
+            .noexe-generator-batch .noexe-textarea {
+                min-height: 92px;
             }
             .noexe-generator-preview {
                 display: flex;
@@ -931,6 +937,15 @@ function renderNoExePrices(config) {
                 <button class="noexe-btn secondary" type="button" data-action="save-generator-overwrite">覆盖已有规格</button>
                 <button class="noexe-btn secondary" type="button" data-action="save-generator-copy">另存为副本</button>
             </div>
+            <div class="noexe-generator-batch">
+                <label>
+                    <span class="noexe-note">批量规格名（一行一个，使用同一套阶梯价；同名自动去重，已有规格会覆盖）</span>
+                    <textarea class="noexe-textarea" data-input="generator-batch-specs" placeholder="如：&#10;黑色-S&#10;黑色-M&#10;黑色-L">${escapeNoExe(generator.batchSpecNames || "")}</textarea>
+                </label>
+                <div class="noexe-generator-actions">
+                    <button class="noexe-btn" type="button" data-action="save-generator-batch">批量保存同价规格</button>
+                </div>
+            </div>
             <div class="noexe-generator-preview ${generatorPreview.isError ? "is-error" : ""}" data-generator-preview>${generatorPreview.html}</div>
         </div>
         ${entries.length ? `<div class="noexe-grid">${entries.map(function(entry) {
@@ -1052,6 +1067,10 @@ async function noExeHandleClick(event) {
         await saveNoExeGeneratedSpec(action.replace("save-generator-", ""));
         return;
     }
+    if (action === "save-generator-batch") {
+        await saveNoExeGeneratedSpec("batch");
+        return;
+    }
     if (action === "copy-spec") {
         const group = config.priceReviewConfig[noExeUiContext.state.group] || {};
         const key = decodeURIComponent(button.dataset.key);
@@ -1171,12 +1190,13 @@ function noExeHandleInput(event) {
         noExeUiContext.searchTimer = setTimeout(noExeRenderPanel, 180);
         return;
     }
-    if (input.dataset.input === "generator-spec" || input.dataset.input === "generator-max" || input.dataset.input === "generator-min" || input.dataset.input === "generator-rounds") {
+    if (input.dataset.input === "generator-spec" || input.dataset.input === "generator-max" || input.dataset.input === "generator-min" || input.dataset.input === "generator-rounds" || input.dataset.input === "generator-batch-specs") {
         const generator = getNoExeGeneratorState();
         if (input.dataset.input === "generator-spec") generator.specName = input.value;
         if (input.dataset.input === "generator-max") generator.maxPrice = input.value;
         if (input.dataset.input === "generator-min") generator.minPrice = input.value;
         if (input.dataset.input === "generator-rounds") generator.rounds = input.value;
+        if (input.dataset.input === "generator-batch-specs") generator.batchSpecNames = input.value;
         updateNoExeGeneratorPreview();
         return;
     }
@@ -1314,14 +1334,15 @@ function getNoExeUniqueSpecName(group, baseName) {
 }
 
 function getNoExeGeneratorState() {
-    if (!noExeUiContext) return { specName: "", maxPrice: "", minPrice: "", rounds: "" };
+    if (!noExeUiContext) return { specName: "", maxPrice: "", minPrice: "", rounds: "", batchSpecNames: "" };
     if (!noExeUiContext.state.generator) {
-        noExeUiContext.state.generator = { specName: "", maxPrice: "", minPrice: "", rounds: "" };
+        noExeUiContext.state.generator = { specName: "", maxPrice: "", minPrice: "", rounds: "", batchSpecNames: "" };
     }
     if (noExeUiContext.state.generator.specName === undefined) noExeUiContext.state.generator.specName = "";
     if (noExeUiContext.state.generator.maxPrice === undefined) noExeUiContext.state.generator.maxPrice = "";
     if (noExeUiContext.state.generator.minPrice === undefined) noExeUiContext.state.generator.minPrice = "";
     if (noExeUiContext.state.generator.rounds === undefined) noExeUiContext.state.generator.rounds = "";
+    if (noExeUiContext.state.generator.batchSpecNames === undefined) noExeUiContext.state.generator.batchSpecNames = "";
     return noExeUiContext.state.generator;
 }
 
@@ -1359,6 +1380,7 @@ function getNoExeGeneratorSpecName(shouldAlert) {
 }
 
 async function saveNoExeGeneratedSpec(mode) {
+    if (mode === "batch") return saveNoExeGeneratedBatchSpecs();
     const specName = getNoExeGeneratorSpecName();
     if (!specName) return;
     const prices = buildNoExeGeneratedPricesFromUi();
@@ -1381,6 +1403,42 @@ async function saveNoExeGeneratedSpec(mode) {
     deleteNoExeSpecDraft(groupKey, targetName);
     noExeUiContext.state.search = "";
     await saveNoExeConfig(config);
+}
+
+async function saveNoExeGeneratedBatchSpecs() {
+    const generator = getNoExeGeneratorState();
+    const specNames = parseNoExeBatchSpecNames(generator.batchSpecNames);
+    if (!specNames.length) return alert("请先填写批量规格名，一行一个");
+    const prices = buildNoExeGeneratedPricesFromUi();
+    if (!prices) return;
+    const groupKey = noExeUiContext.state.group || "normal";
+    const config = noExeUiContext.config;
+    const group = config.priceReviewConfig[groupKey] || {};
+    let createdCount = 0;
+    let overwrittenCount = 0;
+    specNames.forEach(function(specName) {
+        if (Object.prototype.hasOwnProperty.call(group, specName)) overwrittenCount += 1;
+        else createdCount += 1;
+        group[specName] = prices.slice();
+        deleteNoExeSpecDraft(groupKey, specName);
+    });
+    config.priceReviewConfig[groupKey] = group;
+    noExeUiContext.state.search = "";
+    const status = "批量保存完成：新增 " + createdCount + " 个，覆盖 " + overwrittenCount + " 个";
+    await saveNoExeConfig(config, false);
+    noExeUiContext.state.status = status;
+    noExeRenderPanel();
+}
+
+function parseNoExeBatchSpecNames(text) {
+    const seen = new Set();
+    return String(text || "").split(/\r?\n/).map(function(line) {
+        return line.trim();
+    }).filter(function(line) {
+        if (!line || seen.has(line)) return false;
+        seen.add(line);
+        return true;
+    });
 }
 
 function buildNoExeSpecPayload(specName, prices) {
