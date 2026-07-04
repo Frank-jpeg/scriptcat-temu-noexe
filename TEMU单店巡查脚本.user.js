@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEMU单店巡查脚本
 // @namespace    https://local.temu.single.inspector
-// @version      1.8.9
+// @version      1.9.0
 // @description  单店铺 TEMU 巡查：抽检结果、JIT 逾期、合规中心、违规信息、VMI 未收货、价格申报、退货包裹、资金余额
 // @match        https://agentseller.temu.com/*
 // @match        https://seller.kuajingmaihuo.com/*
@@ -47,6 +47,11 @@
     return_order: 'https://seller.kuajingmaihuo.com/wms/stock-mgt/return-order-mgt',
     funds: 'https://seller.kuajingmaihuo.com/labor/account',
   };
+
+  const LOGIN_URL_PREFIXES = [
+    'https://agentseller.temu.com/auth/authentication',
+    'https://seller.kuajingmaihuo.com/login',
+  ];
 
   const CHECK_ITEMS = [
     { key: 'qc', label: '抽检结果明细', low: false },
@@ -1035,6 +1040,30 @@
     return location.href.startsWith(url);
   }
 
+  function isLoginPageUrl(href = location.href) {
+    const value = String(href || '');
+    if (LOGIN_URL_PREFIXES.some((prefix) => value.startsWith(prefix))) {
+      return true;
+    }
+    try {
+      const url = new URL(href, location.origin);
+      const normalized = `${url.protocol}//${url.hostname}${url.pathname}`;
+      return LOGIN_URL_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+    } catch (_error) {
+      return LOGIN_URL_PREFIXES.some((prefix) => value.includes(prefix.replace(/^https?:\/\//, '')));
+    }
+  }
+
+  function buildLoginStopMessage(state) {
+    if (isLoginPageUrl()) {
+      return `检测到登录页，巡查已暂停：${location.href}`;
+    }
+    if (state && state.loginPrompt) {
+      return '检测到登录态失效，巡查已暂停，请重新登录后再开始';
+    }
+    return '';
+  }
+
   async function navigateTo(url, label) {
     await updateJobMessage(`跳转到${label}`);
     await appendJobLog('INFO', `跳转到${label}`);
@@ -1061,6 +1090,12 @@
 
   async function ensureAccessReady(jobId) {
     const state = readAccessState();
+    const loginStopMessage = buildLoginStopMessage(state);
+    if (loginStopMessage) {
+      await appendJobLog('ERROR', loginStopMessage);
+      await markJobStopped(loginStopMessage);
+      throw stopError();
+    }
     if (state.hasRegionPage && state.regionButtons.length) {
       await appendJobLog('WARN', '检测到地区入口页，自动进入商家中心');
       state.regionButtons[0].click();
@@ -1075,9 +1110,6 @@
       state.authButton.click();
       await checkedSleep(jobId, 2500);
       return false;
-    }
-    if (state.loginPrompt) {
-      throw new Error(`当前未登录：${state.body.slice(0, 120)}`);
     }
     await assertNotStopped(jobId);
     return true;
@@ -2917,7 +2949,10 @@
       }
     } catch (error) {
       if (error && error.__temuStop) {
-        await markJobStopped('用户已停止巡查');
+        const latestJob = await loadJob();
+        if (!latestJob || latestJob.status !== 'stopped') {
+          await markJobStopped('用户已停止巡查');
+        }
       } else {
         await appendJobLog('ERROR', String(error && error.message ? error.message : error));
         await markJobError(error);
