@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEMU单店巡查脚本
 // @namespace    https://local.temu.single.inspector
-// @version      1.9.2
+// @version      1.9.3
 // @description  单店铺 TEMU 巡查：抽检结果、JIT 逾期、合规中心、违规信息、VMI 未收货、价格申报、退货包裹、资金余额
 // @match        https://agentseller.temu.com/*
 // @match        https://seller.kuajingmaihuo.com/*
@@ -19,9 +19,6 @@
 
   const APP_ID = '__temu_single_store_script_v8';
   const PANEL_ID = `${APP_ID}_panel`;
-  const PANEL_STYLE_ID = `${APP_ID}_style`;
-  const PANEL_LAUNCHER_ID = `${APP_ID}_launcher`;
-  const PANEL_UI_VERSION = 2;
   const RESULT_DIALOG_ID = `${APP_ID}_result_dialog`;
   const CONFIG_KEY = `${APP_ID}_config`;
   const JOB_KEY = `${APP_ID}_job`;
@@ -84,9 +81,8 @@
 
   const DEFAULT_CONFIG = {
     selectedChecks: Object.fromEntries(CHECK_ITEMS.map((item) => [item.key, !item.low])),
-    lowPriorityVisible: true,
+    lowPriorityVisible: false,
     panelCollapsed: false,
-    panelUiVersion: PANEL_UI_VERSION,
     protectDiff: true,
     protectDiffLimit: 1,
     ruleText: rulesToText(DEFAULT_RULES),
@@ -96,8 +92,6 @@
   let renderTimer = null;
   let engineRunning = false;
   let uiActionPending = false;
-  let panelOpen = false;
-  let activePanelTab = 'inspect';
 
   function normalize(value) {
     return String(value || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
@@ -434,10 +428,7 @@
     const stored = await gmGet(CONFIG_KEY, null);
     const merged = Object.assign({}, DEFAULT_CONFIG, stored || {});
     merged.selectedChecks = Object.assign({}, DEFAULT_CONFIG.selectedChecks, merged.selectedChecks || {});
-    merged.lowPriorityVisible = stored && stored.panelUiVersion === PANEL_UI_VERSION
-      ? !!merged.lowPriorityVisible
-      : true;
-    merged.panelUiVersion = PANEL_UI_VERSION;
+    merged.lowPriorityVisible = !!merged.lowPriorityVisible;
     merged.panelCollapsed = !!merged.panelCollapsed;
     merged.protectDiff = merged.protectDiff !== false;
     merged.protectDiffLimit = Math.max(0, toFloat(merged.protectDiffLimit, 1));
@@ -883,52 +874,92 @@
     if (!job || !document.body) {
       return;
     }
-    ensurePanelStyles();
     const decision = buildDecisionState(job);
     const actions = buildManualActionItems(job);
     const needManual = actions.length > 0 || job.status === 'error';
     const dialog = document.createElement('div');
     dialog.id = RESULT_DIALOG_ID;
-    dialog.className = 'tsi-result-overlay';
-    const tone = job.status === 'error' ? 'error' : (needManual ? 'alert' : 'ok');
-    const actionListHtml = actions.map((item) => `
-      <article class="tsi-result-item">
-        <div class="tsi-result-item-copy">
-          <div class="tsi-result-item-title">${escapeHtml(item.label)}</div>
-          <div class="tsi-result-item-detail">${escapeHtml(item.reason || '需要人工确认')}</div>
-          <a href="${escapeHtml(item.url)}" target="_self" class="tsi-result-link">${escapeHtml(item.url)}</a>
+    dialog.style.cssText = [
+      'position:fixed',
+      'inset:0',
+      'z-index:1000000',
+      'background:rgba(2,6,12,.42)',
+      'display:flex',
+      'align-items:center',
+      'justify-content:center',
+      'padding:18px',
+      'font:12px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+    ].join(';');
+
+    const panel = document.createElement('div');
+    panel.style.cssText = [
+      'width:min(560px,calc(100vw - 36px))',
+      'max-height:min(680px,calc(100vh - 36px))',
+      'overflow:auto',
+      'background:#101418',
+      'color:#e5e7eb',
+      'border:1px solid #2f3942',
+      'border-radius:12px',
+      'box-shadow:0 24px 70px rgba(0,0,0,.45)',
+    ].join(';');
+    dialog.appendChild(panel);
+
+    const head = document.createElement('div');
+    head.style.cssText = 'padding:14px 16px;border-bottom:1px solid #26323d;background:linear-gradient(135deg,#17324d,#101418);';
+    head.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+        <div>
+          <div style="font-size:17px;font-weight:800;color:${needManual ? '#fdba74' : '#86efac'};">${escapeHtml(decision.headline)}</div>
+          <div style="margin-top:4px;color:#cbd5e1;">${escapeHtml(job.storeLabel || '当前店铺')}</div>
         </div>
-        <button data-role="open-link" data-url="${escapeHtml(item.url)}" class="tsi-button tsi-button-secondary">打开</button>
-      </article>
-    `).join('');
-    const contentHtml = needManual && actions.length
-      ? `<div class="tsi-result-list">${actionListHtml}</div>`
-      : job.status === 'done'
-        ? '<div class="tsi-result-message tsi-result-message-ok">全部正常，无需人工处理</div>'
-        : job.error
-          ? `<div class="tsi-result-message tsi-result-message-error">${escapeHtml(job.error)}</div>`
-          : `<div class="tsi-result-message tsi-result-message-warn">${escapeHtml(job.currentMessage || '巡查已停止')}</div>`;
-    const footerHtml = actions.length
-      ? `
-        <button data-role="open-first" class="tsi-button tsi-button-secondary">打开第一个</button>
-        <button data-role="open-all-tabs" class="tsi-button tsi-button-secondary">打开全部</button>
-        <button data-role="copy-links" class="tsi-button tsi-button-primary">复制链接</button>
-      `
-      : '<button data-role="copy-summary" class="tsi-button tsi-button-primary">复制摘要</button>';
-    dialog.innerHTML = `
-      <section class="tsi-result-dialog" role="dialog" aria-modal="true" aria-labelledby="${APP_ID}_result_title">
-        <header class="tsi-result-head">
-          <div>
-            <div class="tsi-result-kicker">巡查完成 · ${escapeHtml(job.storeLabel || '当前店铺')}</div>
-            <h2 id="${APP_ID}_result_title" class="tsi-result-title tsi-result-title-${tone}">${escapeHtml(decision.headline)}</h2>
-            <div class="tsi-result-subtitle">${escapeHtml(decision.detail)}</div>
-          </div>
-          <button data-role="close-result" class="tsi-icon-button" type="button" aria-label="关闭结果弹窗" title="关闭">×</button>
-        </header>
-        <div class="tsi-result-body">${contentHtml}</div>
-        <footer class="tsi-result-footer">${footerHtml}</footer>
-      </section>
+        <button data-role="close-result" style="${buttonStyle('#374151')}">关闭</button>
+      </div>
     `;
+    panel.appendChild(head);
+
+    const body = document.createElement('div');
+    body.style.cssText = 'padding:14px 16px;';
+    panel.appendChild(body);
+
+    if (needManual && actions.length) {
+      const list = document.createElement('div');
+      list.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-bottom:12px;';
+      for (const item of actions) {
+        const row = document.createElement('div');
+        row.style.cssText = 'border:1px solid #3b2f22;background:#21170f;border-radius:8px;padding:10px;';
+        row.innerHTML = `
+          <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;">
+            <div style="min-width:0;">
+              <div style="font-weight:800;color:#fed7aa;">${escapeHtml(item.label)}</div>
+              <div style="margin-top:3px;color:#ffedd5;">${escapeHtml(item.reason || '需要人工确认')}</div>
+              <a href="${escapeHtml(item.url)}" target="_self" style="display:block;margin-top:6px;color:#93c5fd;word-break:break-all;text-decoration:underline;">${escapeHtml(item.url)}</a>
+            </div>
+            <button data-role="open-link" data-url="${escapeHtml(item.url)}" style="${buttonStyle('#0f766e')}">打开</button>
+          </div>
+        `;
+        list.appendChild(row);
+      }
+      body.appendChild(list);
+    } else if (job.status === 'done') {
+      body.innerHTML = '<div style="padding:14px;border:1px solid #1f4d2c;background:#0f2a1d;border-radius:8px;color:#dcfce7;font-weight:700;">全部正常，无需人工处理</div>';
+    } else if (job.error) {
+      body.innerHTML = `<div style="padding:12px;border:1px solid #5f2323;background:#2a1114;border-radius:8px;color:#fecaca;white-space:pre-wrap;">${escapeHtml(job.error)}</div>`;
+    } else {
+      body.innerHTML = `<div style="padding:12px;border:1px solid #574016;background:#2a2111;border-radius:8px;color:#fef3c7;">${escapeHtml(job.currentMessage || '巡查已停止')}</div>`;
+    }
+
+    const footer = document.createElement('div');
+    footer.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;padding:0 16px 16px;';
+    if (actions.length) {
+      footer.innerHTML = `
+        <button data-role="open-first" style="${buttonStyle('#0f766e')}">打开第一个待处理页面</button>
+        <button data-role="open-all-tabs" style="${buttonStyle('#b45309')}">新标签打开全部</button>
+        <button data-role="copy-links" style="${buttonStyle('#2563eb')}">复制全部处理链接</button>
+      `;
+    } else {
+      footer.innerHTML = `<button data-role="copy-summary" style="${buttonStyle('#2563eb')}">复制巡查摘要</button>`;
+    }
+    panel.appendChild(footer);
 
     dialog.querySelector('[data-role="close-result"]').addEventListener('click', closeResultDialog);
     dialog.querySelectorAll('[data-role="open-link"]').forEach((btn) => {
@@ -3041,9 +3072,8 @@
     }
     return {
       selectedChecks,
-      lowPriorityVisible: !!panel.querySelector('[data-role="low-priority-visibility"]').checked,
-      panelCollapsed: current.panelCollapsed,
-      panelUiVersion: PANEL_UI_VERSION,
+      lowPriorityVisible: panel.querySelector('[data-role="low-priority-visibility"]').value === 'show',
+      panelCollapsed: panel.dataset.collapsed === 'true',
       protectDiff: !!panel.querySelector('[data-role="protect-diff"]').checked,
       protectDiffLimit: Math.max(0, toFloat(panel.querySelector('[data-role="protect-limit"]').value, 1)),
       ruleText: panel.querySelector('[data-role="rule-text"]').value,
@@ -3057,208 +3087,7 @@
     return logs.slice(-8).map((item) => `[${item.time}] ${item.message}`).join('\n');
   }
 
-  function ensurePanelStyles() {
-    if (document.getElementById(PANEL_STYLE_ID)) {
-      return;
-    }
-    const style = document.createElement('style');
-    style.id = PANEL_STYLE_ID;
-    style.textContent = `
-      #${PANEL_LAUNCHER_ID}, #${PANEL_ID}, #${RESULT_DIALOG_ID} { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",Arial,sans-serif; }
-      #${PANEL_LAUNCHER_ID} { position:fixed;z-index:2147483000;top:50%;right:20px;transform:translateY(-50%);width:52px;height:52px;border:0;border-radius:50%;background:#2563eb;color:#fff;box-shadow:0 10px 25px rgba(37,99,235,.32);font-size:19px;font-weight:800;line-height:1;cursor:pointer; }
-      #${PANEL_LAUNCHER_ID}:hover { background:#1d4ed8; }
-      #${PANEL_LAUNCHER_ID}[hidden], #${PANEL_ID}[hidden], #${RESULT_DIALOG_ID}[hidden] { display:none; }
-      #${PANEL_ID}.tsi-overlay { position:fixed;z-index:2147483001;inset:0;display:flex;justify-content:flex-end;padding:16px;background:rgba(15,23,42,.18); }
-      #${PANEL_ID} *, #${RESULT_DIALOG_ID} * { box-sizing:border-box; }
-      .tsi-panel { width:min(400px,calc(100vw - 32px));height:min(720px,calc(100dvh - 32px));display:flex;flex-direction:column;overflow:hidden;border:1px solid #d9e1eb;border-radius:8px;background:#fff;color:#172033;box-shadow:0 18px 42px rgba(30,41,59,.2);font-size:12px;line-height:1.45; }
-      .tsi-head { display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex:0 0 auto;padding:16px 16px 12px;border-bottom:1px solid #d9e1eb;background:#fff; }
-      .tsi-kicker { margin:0 0 4px;color:#7b8799;font-size:11px;font-weight:700; }.tsi-title { margin:0;color:#172033;font-size:17px;line-height:1.25;letter-spacing:0; }.tsi-subtitle { margin:5px 0 0;color:#627089;font-size:12px;line-height:1.45; }
-      .tsi-icon-button { width:34px;height:34px;display:inline-grid;place-items:center;flex:0 0 auto;border:1px solid #c5d0de;border-radius:6px;background:#fff;color:#44536a;font-size:22px;line-height:1;cursor:pointer; }.tsi-icon-button:hover { background:#f8fafc;color:#111827; }
-      .tsi-tabs { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:2px;flex:0 0 auto;padding:6px 12px 0;border-bottom:1px solid #d9e1eb;background:#fff; }.tsi-tab { min-width:0;min-height:39px;border:0;border-bottom:2px solid transparent;background:transparent;color:#728096;font-size:13px;font-weight:700;cursor:pointer; }.tsi-tab:hover { color:#1d4ed8; }.tsi-tab.is-active { border-bottom-color:#2563eb;color:#1d4ed8; }
-      .tsi-scroll { min-height:0;flex:1 1 auto;overflow:auto;padding:14px 16px 18px;background:#f8fafc; }.tsi-page { display:none; }.tsi-page.is-active { display:block; }
-      .tsi-decision { padding:12px;border:1px solid #d9e1eb;border-left:4px solid #94a3b8;border-radius:7px;background:#fff; }.tsi-decision[data-tone="running"] { border-left-color:#2563eb;background:#f7fbff; }.tsi-decision[data-tone="ok"] { border-left-color:#15803d;background:#f0fdf4; }.tsi-decision[data-tone="alert"], .tsi-decision[data-tone="warn"] { border-left-color:#b45309;background:#fffbeb; }.tsi-decision[data-tone="error"] { border-left-color:#b91c1c;background:#fef2f2; }
-      .tsi-decision-label { color:#7a8799;font-size:11px;font-weight:700; }.tsi-decision-title { margin-top:5px;color:#1f2937;font-size:18px;font-weight:780; }.tsi-decision-detail { margin-top:4px;color:#5d6c82;font-size:12px;line-height:1.5;white-space:pre-wrap; }
-      .tsi-actions { display:flex;flex-wrap:wrap;gap:8px;margin-top:12px; }.tsi-button { min-height:34px;padding:0 11px;border:1px solid #c5d0de;border-radius:6px;background:#fff;color:#435168;font-size:12px;font-weight:700;cursor:pointer; }.tsi-button:hover { background:#f8fafc; }.tsi-button:disabled { cursor:not-allowed;opacity:.48; }.tsi-button-primary { border-color:#2563eb;background:#2563eb;color:#fff; }.tsi-button-primary:hover { background:#1d4ed8; }.tsi-button-danger { border-color:#fecaca;color:#b91c1c; }.tsi-primary-action { flex:1 1 132px; }
-      .tsi-section { margin-top:18px;padding-top:14px;border-top:1px solid #d9e1eb; }.tsi-section-head { display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px; }.tsi-section-title { margin:0;color:#344258;font-size:13px;font-weight:780; }.tsi-section-note { color:#79869a;font-size:11px; }
-      .tsi-check-list { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px; }.tsi-check { display:flex;align-items:center;gap:6px;min-width:0;min-height:42px;padding:6px 7px 6px 8px;border:1px solid #d9e1eb;border-radius:6px;background:#fff;color:#405069; }.tsi-check-label { display:flex;align-items:center;gap:7px;min-width:0;flex:1;cursor:pointer;font-size:12px;line-height:1.3; }.tsi-check-label input { width:15px;height:15px;flex:0 0 auto;accent-color:#2563eb; }.tsi-check-label span { min-width:0;overflow-wrap:anywhere; }.tsi-check-link { min-height:27px;padding:0 7px;flex:0 0 auto;border:1px solid #c5d0de;border-radius:5px;background:#fff;color:#1d4ed8;font-size:10px;font-weight:700;cursor:pointer; }.tsi-check-link:hover { background:#eff6ff; }
-      .tsi-low-priority { display:none; }.tsi-low-priority.is-visible { display:grid; }.tsi-switch-row { display:flex;align-items:center;justify-content:space-between;gap:12px;padding:4px 0 10px; }.tsi-switch-copy { color:#536178;font-size:12px; }.tsi-switch { position:relative;display:inline-flex;width:40px;height:22px;flex:0 0 auto;cursor:pointer; }.tsi-switch input { position:absolute;opacity:0; }.tsi-switch-track { width:100%;border-radius:12px;background:#cbd5e1;transition:background .16s ease; }.tsi-switch-track::after { content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.2);transition:transform .16s ease; }.tsi-switch input:checked + .tsi-switch-track { background:#2563eb; }.tsi-switch input:checked + .tsi-switch-track::after { transform:translateX(18px); }
-      .tsi-rule-grid { display:grid;grid-template-columns:minmax(0,1fr) 92px;gap:10px; }.tsi-field { display:grid;gap:6px; }.tsi-field-label { color:#607087;font-size:12px;font-weight:700; }.tsi-input, .tsi-select, .tsi-textarea { width:100%;border:1px solid #c5d0de;border-radius:6px;background:#fff;color:#27354a;font-size:12px; }.tsi-input, .tsi-select { min-height:34px;padding:0 9px; }.tsi-textarea { min-height:230px;padding:10px;resize:vertical;line-height:1.55;font-family:"SFMono-Regular",Consolas,monospace; }.tsi-input:focus, .tsi-select:focus, .tsi-textarea:focus { border-color:#2563eb;outline:none;box-shadow:0 0 0 3px rgba(37,99,235,.13); }.tsi-rule-toggle { display:flex;align-items:center;gap:9px;margin-bottom:14px;color:#536178;font-size:12px; }.tsi-rule-help { margin:8px 0 0;color:#718097;font-size:11px;line-height:1.5; }.tsi-save-row { display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px; }.tsi-rule-status { color:#15803d;font-size:11px;font-weight:700; }
-      .tsi-state-line { margin-top:10px;padding:10px;border:1px solid #d9e1eb;border-radius:6px;background:#fff;color:#536178;font-size:12px;line-height:1.45; }.tsi-state-line strong { color:#344258; }.tsi-summary, .tsi-logs { display:block;width:100%;margin:0;overflow:auto;padding:11px;border:1px solid #d9e1eb;border-radius:6px;background:#fff;color:#405069;white-space:pre-wrap;font:11px/1.55 "SFMono-Regular",Consolas,monospace; }.tsi-summary { max-height:230px; }.tsi-logs { max-height:260px; }.tsi-footer { display:flex;align-items:center;justify-content:space-between;gap:10px;flex:0 0 auto;min-height:52px;padding:9px 16px;border-top:1px solid #d9e1eb;background:#fff; }.tsi-footer-status { min-width:0;overflow:hidden;color:#6f7d91;font-size:11px;text-overflow:ellipsis;white-space:nowrap; }
-      #${RESULT_DIALOG_ID}.tsi-result-overlay { position:fixed;z-index:2147483002;inset:0;display:grid;place-items:center;padding:18px;background:rgba(15,23,42,.32); }.tsi-result-dialog { width:min(620px,calc(100vw - 36px));max-height:min(680px,calc(100dvh - 36px));display:flex;flex-direction:column;overflow:hidden;border:1px solid #d9e1eb;border-radius:8px;background:#fff;color:#172033;box-shadow:0 18px 42px rgba(30,41,59,.25);font-size:12px;line-height:1.45; }.tsi-result-head { display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:16px;border-bottom:1px solid #d9e1eb; }.tsi-result-kicker { margin:0 0 4px;color:#7c889a;font-size:11px;font-weight:700; }.tsi-result-title { margin:0;font-size:18px; }.tsi-result-title-alert { color:#9a3412; }.tsi-result-title-ok { color:#15803d; }.tsi-result-title-error { color:#b91c1c; }.tsi-result-subtitle { margin-top:5px;color:#617087;font-size:12px; }.tsi-result-body { min-height:0;overflow:auto;padding:14px 16px;background:#f8fafc; }.tsi-result-list { display:grid;gap:8px; }.tsi-result-item { display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:11px;border:1px solid #fed7aa;border-radius:7px;background:#fff; }.tsi-result-item-copy { min-width:0; }.tsi-result-item-title { color:#7c2d12;font-size:13px;font-weight:780; }.tsi-result-item-detail { margin-top:4px;color:#8d5b44;font-size:12px;line-height:1.45; }.tsi-result-link { display:block;margin-top:6px;color:#1d4ed8;font-size:11px;overflow-wrap:anywhere;text-decoration:underline; }.tsi-result-message { padding:14px;border:1px solid #d9e1eb;border-radius:7px;background:#fff;color:#536178;font-weight:700;white-space:pre-wrap; }.tsi-result-message-ok { border-color:#bbf7d0;color:#166534; }.tsi-result-message-error { border-color:#fecaca;color:#b91c1c; }.tsi-result-message-warn { border-color:#fde68a;color:#92400e; }.tsi-result-footer { display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;padding:12px 16px;border-top:1px solid #d9e1eb;background:#fff; }
-      #${PANEL_ID} button:focus-visible, #${RESULT_DIALOG_ID} button:focus-visible, #${PANEL_ID} input:focus-visible, #${PANEL_ID} select:focus-visible, #${PANEL_ID} textarea:focus-visible { outline:3px solid rgba(37,99,235,.26);outline-offset:2px; }
-      @media (max-width:640px) { #${PANEL_LAUNCHER_ID} { top:auto;right:16px;bottom:18px;transform:none; } #${PANEL_ID}.tsi-overlay { padding:0; } .tsi-panel { width:100vw;height:100dvh;border:0;border-radius:0; } .tsi-check-list { grid-template-columns:1fr; } .tsi-rule-grid { grid-template-columns:1fr; } #${RESULT_DIALOG_ID}.tsi-result-overlay { padding:0; } .tsi-result-dialog { width:100vw;max-height:100dvh;height:100dvh;border:0;border-radius:0; } }
-    `;
-    (document.head || document.documentElement).appendChild(style);
-  }
-
-  function setActivePanelTab(tab) {
-    if (!['inspect', 'rules', 'records'].includes(tab)) {
-      return;
-    }
-    activePanelTab = tab;
-    scheduleRender();
-  }
-
-  function openPanel() {
-    panelOpen = true;
-    scheduleRender();
-  }
-
-  function closePanel() {
-    panelOpen = false;
-    scheduleRender();
-    setTimeout(() => document.getElementById(PANEL_LAUNCHER_ID)?.focus(), 0);
-  }
-
-  function modernCheckboxHtml(item) {
-    const url = URLS[item.key] || '';
-    return `
-      <div class="tsi-check">
-        <label class="tsi-check-label"><input type="checkbox" data-check="${item.key}"><span>${escapeHtml(item.label)}</span></label>
-        ${url ? `<button data-role="open-check-link" data-check-link="${item.key}" class="tsi-check-link" type="button" title="打开${escapeHtml(item.label)}">打开</button>` : ''}
-      </div>
-    `;
-  }
-
   async function renderPanel() {
-    const config = await loadConfig();
-    const job = await loadJob();
-    const panel = document.getElementById(PANEL_ID);
-    const launcher = document.getElementById(PANEL_LAUNCHER_ID);
-    if (!panel) {
-      return;
-    }
-    const decision = buildDecisionState(job);
-    panel.querySelector('[data-role="decision-title"]').textContent = decision.headline;
-    panel.querySelector('[data-role="decision-detail"]').textContent = decision.detail;
-    panel.querySelector('[data-role="decision-card"]').dataset.tone = decision.tone || 'idle';
-    panel.querySelector('[data-role="status"]').textContent = job ? (job.currentMessage || job.status || '待命') : '待命';
-    panel.querySelector('[data-role="summary"]').textContent = buildSummaryText(job);
-    panel.querySelector('[data-role="logs"]').textContent = renderLogs(job && job.logs);
-    panel.querySelector('[data-role="low-priority-wrap"]').classList.toggle('is-visible', config.lowPriorityVisible);
-    panel.querySelector('[data-role="low-priority-visibility"]').checked = config.lowPriorityVisible;
-    panel.hidden = !panelOpen;
-    panel.setAttribute('aria-hidden', panelOpen ? 'false' : 'true');
-    if (launcher) {
-      launcher.hidden = panelOpen;
-    }
-    panel.querySelectorAll('[data-tab]').forEach((tab) => {
-      const selected = tab.dataset.tab === activePanelTab;
-      tab.classList.toggle('is-active', selected);
-      tab.setAttribute('aria-selected', String(selected));
-    });
-    panel.querySelectorAll('[data-page]').forEach((page) => page.classList.toggle('is-active', page.dataset.page === activePanelTab));
-    for (const item of CHECK_ITEMS) {
-      const checkbox = panel.querySelector(`[data-check="${item.key}"]`);
-      if (checkbox && document.activeElement !== checkbox) {
-        checkbox.checked = !!config.selectedChecks[item.key];
-      }
-    }
-    const protectDiffInput = panel.querySelector('[data-role="protect-diff"]');
-    const protectLimitInput = panel.querySelector('[data-role="protect-limit"]');
-    const ruleTextInput = panel.querySelector('[data-role="rule-text"]');
-    if (document.activeElement !== protectDiffInput) {
-      protectDiffInput.checked = !!config.protectDiff;
-    }
-    if (document.activeElement !== protectLimitInput) {
-      protectLimitInput.value = String(config.protectDiffLimit ?? 1);
-    }
-    const ruleText = document.activeElement === ruleTextInput ? ruleTextInput.value : (config.ruleText || rulesToText(DEFAULT_RULES));
-    if (document.activeElement !== ruleTextInput) {
-      ruleTextInput.value = ruleText;
-    }
-    renderRuleStatus(panel, ruleText);
-    const running = job && job.status === 'running';
-    panel.querySelector('[data-role="start"]').disabled = running || uiActionPending;
-    panel.querySelector('[data-role="stop"]').disabled = !running || uiActionPending;
-  }
-
-  function buildPanelDom() {
-    if (document.getElementById(PANEL_ID)) {
-      return;
-    }
-    ensurePanelStyles();
-    const launcher = document.createElement('button');
-    launcher.id = PANEL_LAUNCHER_ID;
-    launcher.type = 'button';
-    launcher.textContent = '查';
-    launcher.setAttribute('aria-label', '打开 TEMU 单店巡查');
-    launcher.title = '打开 TEMU 单店巡查';
-    const panel = document.createElement('div');
-    panel.id = PANEL_ID;
-    panel.className = 'tsi-overlay';
-    panel.hidden = true;
-    panel.innerHTML = `
-      <aside class="tsi-panel" role="dialog" aria-modal="true" aria-label="TEMU 单店巡查">
-        <header class="tsi-head"><div><p class="tsi-kicker">当前店铺</p><h2 class="tsi-title">TEMU 单店巡查</h2><p class="tsi-subtitle">巡查配置与结果集中在一个紧凑工作台。</p></div><button data-role="close-panel" class="tsi-icon-button" type="button" aria-label="关闭巡查面板" title="关闭">×</button></header>
-        <nav class="tsi-tabs" aria-label="巡查面板页签"><button class="tsi-tab" type="button" data-tab="inspect">巡查</button><button class="tsi-tab" type="button" data-tab="rules">价格规则</button><button class="tsi-tab" type="button" data-tab="records">结果记录</button></nav>
-        <div class="tsi-scroll">
-          <section class="tsi-page" data-page="inspect">
-            <div data-role="decision-card" class="tsi-decision" data-tone="idle"><div class="tsi-decision-label">本次巡查状态</div><div data-role="decision-title" class="tsi-decision-title">待命</div><div data-role="decision-detail" class="tsi-decision-detail">还没开始巡查</div></div>
-            <div class="tsi-actions"><button data-role="start" class="tsi-button tsi-button-primary tsi-primary-action" type="button">开始巡查</button><button data-role="stop" class="tsi-button" type="button">停止</button><button data-role="copy" class="tsi-button" type="button">复制摘要</button><button data-role="clear" class="tsi-button tsi-button-danger" type="button">清空</button></div>
-            <section class="tsi-section"><div class="tsi-section-head"><h3 class="tsi-section-title">常规项目</h3><span class="tsi-section-note">8 项默认启用</span></div><div class="tsi-check-list">${CHECK_ITEMS.filter((item) => !item.low).map((item) => modernCheckboxHtml(item)).join('')}</div></section>
-            <section class="tsi-section"><div class="tsi-switch-row"><div><h3 class="tsi-section-title">低优先级项目</h3><div class="tsi-switch-copy">退货包裹与资金中心余额</div></div><label class="tsi-switch" title="显示低优先级项目"><input data-role="low-priority-visibility" type="checkbox"><span class="tsi-switch-track"></span></label></div><div data-role="low-priority-wrap" class="tsi-check-list tsi-low-priority">${CHECK_ITEMS.filter((item) => item.low).map((item) => modernCheckboxHtml(item)).join('')}</div></section>
-            <div class="tsi-state-line"><strong>当前状态：</strong><span data-role="status">待命</span></div>
-          </section>
-          <section class="tsi-page" data-page="rules"><section class="tsi-section" style="margin-top:0;padding-top:0;border-top:0"><div class="tsi-rule-toggle"><label class="tsi-switch" title="开启价差保护"><input type="checkbox" data-role="protect-diff"><span class="tsi-switch-track"></span></label><span>开启价差保护</span></div><div class="tsi-rule-grid"><label class="tsi-field"><span class="tsi-field-label">价差阈值</span><input class="tsi-input" type="number" data-role="protect-limit" min="0" step="0.1"></label><label class="tsi-field"><span class="tsi-field-label">单位</span><select class="tsi-select"><option>CNY</option></select></label></div></section><section class="tsi-section"><div class="tsi-section-head"><h3 class="tsi-section-title">规则内容</h3><span class="tsi-section-note">每行一条</span></div><textarea class="tsi-textarea" data-role="rule-text"></textarea><p class="tsi-rule-help">格式：关键词 | 最小价 | 最大价 | 动作。输入时会继续自动保存。</p><div class="tsi-save-row"><span data-role="rule-status" class="tsi-rule-status">规则输入后自动保存</span><div><button data-role="restore-rules" class="tsi-button" type="button">恢复默认</button> <button data-role="save-rules" class="tsi-button tsi-button-primary" type="button">保存规则</button></div></div></section></section>
-          <section class="tsi-page" data-page="records"><section class="tsi-section" style="margin-top:0;padding-top:0;border-top:0"><div class="tsi-section-head"><h3 class="tsi-section-title">巡查摘要</h3><span class="tsi-section-note">最近一次</span></div><pre data-role="summary" class="tsi-summary">暂无结果</pre></section><section class="tsi-section"><div class="tsi-section-head"><h3 class="tsi-section-title">最近日志</h3><span class="tsi-section-note">最多显示 8 条</span></div><pre data-role="logs" class="tsi-logs">暂无日志</pre></section></section>
-        </div>
-        <footer class="tsi-footer"><span class="tsi-footer-status">关闭面板不会中断正在进行的巡查</span><button data-role="close-panel" class="tsi-button" type="button">关闭</button></footer>
-      </aside>
-    `;
-    document.body.appendChild(launcher);
-    document.body.appendChild(panel);
-    launcher.addEventListener('click', openPanel);
-    panel.querySelectorAll('[data-role="close-panel"]').forEach((button) => button.addEventListener('click', closePanel));
-    panel.addEventListener('click', (event) => { if (event.target === panel) closePanel(); });
-    panel.querySelectorAll('[data-tab]').forEach((tab) => tab.addEventListener('click', () => setActivePanelTab(tab.dataset.tab)));
-    panel.querySelectorAll('[data-role="open-check-link"]').forEach((button) => button.addEventListener('click', () => {
-      const url = URLS[button.dataset.checkLink];
-      if (url) {
-        location.href = url;
-      }
-    }));
-    panel.querySelector('[data-role="start"]').addEventListener('click', () => startJobFromUi().catch(console.error));
-    panel.querySelector('[data-role="stop"]').addEventListener('click', () => stopJobFromUi().catch(console.error));
-    panel.querySelector('[data-role="copy"]').addEventListener('click', () => copySummaryFromUi().catch(console.error));
-    panel.querySelector('[data-role="clear"]').addEventListener('click', () => clearResultFromUi().catch(console.error));
-    panel.querySelector('[data-role="save-rules"]').addEventListener('click', () => saveRulesFromUi().catch(console.error));
-    panel.querySelector('[data-role="restore-rules"]').addEventListener('click', () => restoreDefaultRulesFromUi().catch(console.error));
-    panel.querySelector('[data-role="low-priority-visibility"]').addEventListener('change', async () => {
-      const nextConfig = await readConfigFromUi();
-      await saveConfig(nextConfig);
-      scheduleRender();
-    });
-    panel.querySelectorAll('input[data-check], [data-role="protect-diff"], [data-role="protect-limit"]').forEach((input) => {
-      input.addEventListener('change', async () => {
-        const nextConfig = await readConfigFromUi();
-        await saveConfig(nextConfig);
-        scheduleRender();
-      });
-      input.addEventListener('input', async () => {
-        const nextConfig = await readConfigFromUi();
-        await saveConfig(nextConfig);
-      });
-    });
-    const ruleTextInput = panel.querySelector('[data-role="rule-text"]');
-    ruleTextInput.addEventListener('input', async () => {
-      renderRuleStatus(panel, ruleTextInput.value);
-      await saveConfig(await readConfigFromUi());
-    });
-    ruleTextInput.addEventListener('change', () => saveRulesFromUi().catch(console.error));
-    document.addEventListener('keydown', (event) => {
-      if (event.key !== 'Escape') {
-        return;
-      }
-      if (document.getElementById(RESULT_DIALOG_ID)) {
-        closeResultDialog();
-      } else if (panelOpen) {
-        closePanel();
-      }
-    });
-  }
-
-  async function renderLegacyPanel() {
     const config = await loadConfig();
     const job = await loadJob();
     const panel = document.getElementById(PANEL_ID);
@@ -3397,7 +3226,7 @@
     }, 50);
   }
 
-  function buildLegacyPanelDom() {
+  function buildPanelDom() {
     if (document.getElementById(PANEL_ID)) {
       return;
     }
