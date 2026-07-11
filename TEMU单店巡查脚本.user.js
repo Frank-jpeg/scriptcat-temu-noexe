@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEMU单店巡查脚本
 // @namespace    https://local.temu.single.inspector
-// @version      1.9.3
+// @version      1.9.4
 // @description  单店铺 TEMU 巡查：抽检结果、JIT 逾期、合规中心、违规信息、VMI 未收货、价格申报、退货包裹、资金余额
 // @match        https://agentseller.temu.com/*
 // @match        https://seller.kuajingmaihuo.com/*
@@ -3331,6 +3331,16 @@
     panel.querySelector('[data-role="clear"]').addEventListener('click', () => clearResultFromUi().catch(console.error));
     panel.querySelector('[data-role="save-rules"]').addEventListener('click', () => saveRulesFromUi().catch(console.error));
     panel.querySelector('[data-role="restore-rules"]').addEventListener('click', () => restoreDefaultRulesFromUi().catch(console.error));
+    panel.querySelectorAll('[data-role="open-check-link"]').forEach((button) => {
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const url = button.getAttribute('data-url');
+        if (url) {
+          location.href = url;
+        }
+      });
+    });
     document.getElementById(`${APP_ID}_header`).addEventListener('click', async () => {
       const nextConfig = await readConfigFromUi();
       nextConfig.panelCollapsed = !nextConfig.panelCollapsed;
@@ -3368,7 +3378,8 @@
   }
 
   function checkboxHtml(item) {
-    return `<label style="display:flex;align-items:center;gap:5px;padding:3px 7px;border:1px solid #334155;border-radius:999px;background:#0f1317;font-size:10.5px;"><input type="checkbox" data-check="${item.key}"><span>${item.label}</span></label>`;
+    const url = URLS[item.key] || location.href;
+    return `<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 4px 3px 7px;border:1px solid #334155;border-radius:999px;background:#0f1317;font-size:10.5px;"><label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" data-check="${item.key}"><span>${item.label}</span></label><button type="button" data-role="open-check-link" data-url="${escapeHtml(url)}" title="打开${escapeHtml(item.label)}" style="border:1px solid #334155;border-radius:999px;background:#17202a;color:#bfdbfe;cursor:pointer;font-size:10px;font-weight:700;line-height:1;padding:3px 6px;">打开</button></span>`;
   }
 
   function buttonStyle(color) {
