@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEMU单店巡查脚本
 // @namespace    https://local.temu.single.inspector
-// @version      1.9.4
+// @version      1.9.5
 // @description  单店铺 TEMU 巡查：抽检结果、JIT 逾期、合规中心、违规信息、VMI 未收货、价格申报、退货包裹、资金余额
 // @match        https://agentseller.temu.com/*
 // @match        https://seller.kuajingmaihuo.com/*
@@ -3314,12 +3314,12 @@
 
         <div style="margin-bottom:7px;padding:7px;border-radius:8px;background:#0f1317;border:1px solid #25303a;">
           <div style="font-weight:600;margin-bottom:3px;">巡查摘要</div>
-          <pre data-role="summary" style="margin:0;max-height:170px;overflow:auto;white-space:pre-wrap;color:#e5e7eb;font:10.5px/1.42 Consolas,monospace;">暂无结果</pre>
+          <pre data-role="summary" style="margin:0;max-height:88px;overflow:auto;white-space:pre-wrap;color:#e5e7eb;font:10px/1.35 Consolas,monospace;">暂无结果</pre>
         </div>
 
         <div style="padding:7px;border-radius:8px;background:#0f1317;border:1px solid #25303a;">
           <div style="font-weight:600;margin-bottom:3px;">最近日志</div>
-          <pre data-role="logs" style="margin:0;max-height:110px;overflow:auto;white-space:pre-wrap;color:#cbd5e1;font:10px/1.4 Consolas,monospace;">暂无日志</pre>
+          <pre data-role="logs" style="margin:0;max-height:56px;overflow:auto;white-space:pre-wrap;color:#cbd5e1;font:9.5px/1.32 Consolas,monospace;">暂无日志</pre>
         </div>
       </div>
     `;
