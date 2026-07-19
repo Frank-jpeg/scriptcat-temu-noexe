@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEMU单店巡查脚本
 // @namespace    https://local.temu.single.inspector
-// @version      1.9.6
+// @version      1.9.7
 // @description  单店铺 TEMU 巡查：抽检结果、JIT 逾期、合规中心、违规信息、VMI 未收货、价格申报、退货包裹、资金余额
 // @match        https://agentseller.temu.com/*
 // @match        https://seller.kuajingmaihuo.com/*
@@ -17,6 +17,7 @@
 (function () {
   'use strict';
 
+  const SCRIPT_VERSION = '1.9.7';
   const APP_ID = '__temu_single_store_script_v8';
   const PANEL_ID = `${APP_ID}_panel`;
   const RESULT_DIALOG_ID = `${APP_ID}_result_dialog`;
@@ -137,6 +138,47 @@
     const text = String(value ?? '').replace(/[^\d.-]/g, '');
     const num = Number.parseFloat(text);
     return Number.isFinite(num) ? num : fallback;
+  }
+
+  function pad2(value) {
+    return String(value).padStart(2, '0');
+  }
+
+  function formatDateTime(timestamp) {
+    if (!timestamp) {
+      return '';
+    }
+    const date = new Date(timestamp);
+    if (!Number.isFinite(date.getTime())) {
+      return '';
+    }
+    return [
+      date.getFullYear(),
+      pad2(date.getMonth() + 1),
+      pad2(date.getDate()),
+    ].join('-') + ' ' + [
+      pad2(date.getHours()),
+      pad2(date.getMinutes()),
+      pad2(date.getSeconds()),
+    ].join(':');
+  }
+
+  function buildJobTimeText(job) {
+    if (!job) {
+      return '';
+    }
+    const startedAt = formatDateTime(job.startedAt);
+    const finishedAt = formatDateTime(job.finishedAt);
+    if (startedAt && finishedAt) {
+      return `巡查时间：${startedAt} - ${finishedAt}`;
+    }
+    if (startedAt) {
+      return `开始时间：${startedAt}`;
+    }
+    if (finishedAt) {
+      return `完成时间：${finishedAt}`;
+    }
+    return '';
   }
 
   function parseDateTimeText(text) {
@@ -809,6 +851,10 @@
       `状态：${job.status || 'idle'}`,
       `项目：${job.steps && job.steps.length ? job.steps.map(getStepLabel).join('、') : '无'}`,
     ];
+    const timeText = buildJobTimeText(job);
+    if (timeText) {
+      lines.push(timeText);
+    }
     if (reasons.length) {
       lines.push('');
       lines.push('需处理：');
@@ -844,6 +890,10 @@
       `结论：${decision.headline}`,
       `店铺：${job.storeLabel || '当前店铺'}`,
     ];
+    const timeText = buildJobTimeText(job);
+    if (timeText) {
+      lines.push(timeText);
+    }
     if (reasons.length) {
       lines.push('');
       lines.push('需处理：');
@@ -913,6 +963,7 @@
     const decision = buildDecisionState(job);
     const actions = buildManualActionItems(job);
     const needManual = actions.length > 0 || job.status === 'error';
+    const timeText = buildJobTimeText(job);
     const dialog = document.createElement('div');
     dialog.id = RESULT_DIALOG_ID;
     dialog.style.cssText = [
@@ -947,6 +998,7 @@
         <div>
           <div style="font-size:17px;font-weight:800;color:${needManual ? '#fdba74' : '#86efac'};">${escapeHtml(decision.headline)}</div>
           <div style="margin-top:4px;color:#cbd5e1;">${escapeHtml(job.storeLabel || '当前店铺')}</div>
+          ${timeText ? `<div style="margin-top:3px;color:#93c5fd;font-size:11px;">${escapeHtml(timeText)}</div>` : ''}
         </div>
         <button data-role="close-result" style="${buttonStyle('#374151')}">关闭</button>
       </div>
@@ -992,7 +1044,7 @@
       }
       body.appendChild(list);
     } else if (job.status === 'done') {
-      body.innerHTML = '<div style="padding:14px;border:1px solid #1f4d2c;background:#0f2a1d;border-radius:8px;color:#dcfce7;font-weight:700;">全部正常，无需人工处理</div>';
+      body.innerHTML = `<div style="padding:14px;border:1px solid #1f4d2c;background:#0f2a1d;border-radius:8px;color:#dcfce7;font-weight:700;">全部正常，无需人工处理${timeText ? `<div style="margin-top:6px;color:#93c5fd;font-size:11px;">${escapeHtml(timeText)}</div>` : ''}</div>`;
     } else if (job.error) {
       body.innerHTML = `<div style="padding:12px;border:1px solid #5f2323;background:#2a1114;border-radius:8px;color:#fecaca;white-space:pre-wrap;">${escapeHtml(job.error)}</div>`;
     } else {
@@ -3171,6 +3223,10 @@
 
     panel.querySelector('[data-role="decision-title"]').textContent = decision.headline;
     panel.querySelector('[data-role="decision-detail"]').textContent = decision.detail;
+    const decisionTimeEl = panel.querySelector('[data-role="decision-time"]');
+    if (decisionTimeEl) {
+      decisionTimeEl.textContent = buildJobTimeText(job);
+    }
     panel.querySelector('[data-role="decision-card"]').style.background = tone.bg;
     panel.querySelector('[data-role="decision-card"]').style.borderColor = tone.border;
     panel.querySelector('[data-role="decision-title"]').style.color = tone.title;
@@ -3316,9 +3372,10 @@
         <span id="${APP_ID}_toggle_btn" style="display:inline-flex;align-items:center;justify-content:center;min-width:38px;height:22px;padding:0 8px;border:1px solid #2563eb;border-radius:999px;background:rgba(37,99,235,.14);color:#bfdbfe;font:700 10.5px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;flex:0 0 auto;">收起</span>
         <div data-role="brand" style="min-width:0;display:flex;align-items:center;gap:8px;overflow:hidden;flex:1 1 auto;">
           <span style="font-weight:700;white-space:nowrap;">TEMU单店巡查脚本</span>
+          <span style="font-weight:800;color:#93c5fd;border:1px solid #2563eb;border-radius:999px;padding:1px 5px;background:rgba(37,99,235,.12);white-space:nowrap;">v${SCRIPT_VERSION}</span>
           <span data-role="mini-status" style="display:none;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#bfdbfe;font-size:10px;opacity:.95;"></span>
         </div>
-        <div data-role="meta" style="font-size:10px;opacity:.78;flex:0 0 auto;">Chrome / ScriptCat</div>
+        <div data-role="meta" style="font-size:10px;opacity:.78;flex:0 0 auto;">ScriptCat</div>
       </div>
       <div id="${APP_ID}_body" style="padding:10px;">
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
@@ -3331,6 +3388,7 @@
         <div data-role="decision-card" style="margin-bottom:8px;padding:8px 9px;border:1px solid #334155;border-radius:9px;background:#17202a;">
           <div data-role="decision-title" style="font-weight:700;font-size:16px;line-height:1.2;color:#cbd5e1;">待命</div>
           <div data-role="decision-detail" style="margin-top:4px;font-size:10.5px;line-height:1.45;color:#94a3b8;white-space:pre-wrap;">还没开始巡查</div>
+          <div data-role="decision-time" style="margin-top:4px;font-size:10.5px;line-height:1.45;color:#93c5fd;white-space:pre-wrap;"></div>
         </div>
 
         <div style="margin-bottom:8px;padding:7px;border:1px solid #25303a;border-radius:8px;background:#161b22;">
