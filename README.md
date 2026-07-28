@@ -38,6 +38,19 @@ git@github.com:Frank-jpeg/scriptcat-temu-noexe.git
 
 旧仓库地址 `jianpanlan0-svg/scriptcat-temu-noexe` 已转移到 `Frank-jpeg/scriptcat-temu-noexe`。不要在旧账号重新创建同名仓库，否则旧用户的自动更新重定向可能失效。
 
+### 版本号格式：不要统一
+
+本仓库并存两套 `@version` 格式，这是刻意保留的：
+
+| 脚本 | 格式 | 示例 |
+|---|---|---|
+| `temu-life-*` 四个生命周期脚本 | 日期式（继承自上游） | `2026.0704.2` |
+| 其余自写脚本 | 语义式 | `4.30.0`、`8.5.1`、`1.9.7` |
+
+ScriptCat 靠比较 `@version` 大小决定是否更新。若把日期式改成语义式（如 `2026.0704.2` → `1.0.0`），会被判定为**降级**，不仅当次不更新，之后也再升不上去（除非版本号始终大于 `2026.x`）。
+
+版本比较只在同一个脚本内部进行，跨脚本不比较。两套格式并存不影响任何功能。
+
 ## 上游对比
 
 4 个生命周期脚本 fork 自 https://www.goldabcd.com/temu.html ，去掉了本地下载器依赖。上游现状、差异清单和重新对比的方法见 [UPSTREAM.md](UPSTREAM.md)。
