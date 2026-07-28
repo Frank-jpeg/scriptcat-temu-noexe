@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Temu 商品信息抓取下载 GitHub更新版
 // @namespace    https://bbs.tampermonkey.net.cn/
-// @version      4.29.4
-// @description  批量抓取 Temu 商品（支持多币种价格/销量筛选、生成销量TXT统计、中文/英文销量识别、JPG/PNG可选、原始字节下载、自动跳过推荐区、并发下载、自定义间隔）
+// @version      4.30.0
+// @description  批量抓取 Temu 商品（支持多币种价格/销量筛选、记住上次筛选值、生成销量TXT统计、中文/英文销量识别、JPG/PNG可选、原始字节下载、自动跳过推荐区、并发下载、自定义间隔）
 // @author       Gemini
 // @match        https://www.temu.com/*
 // @run-at       document-idle
@@ -20,9 +20,13 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '4.29.4';
+    const SCRIPT_VERSION = '4.30.0';
     const STORAGE_KEY = 'TEMU_SCRAPED_SHOPS_STORAGE';
     const IMAGE_FORMAT_KEY = 'TEMU_IMAGE_FORMAT';
+    const MIN_SALES_KEY = 'TEMU_MIN_SALES';
+    const MIN_PRICE_KEY = 'TEMU_MIN_PRICE';
+    const DEFAULT_MIN_SALES = 10;
+    const DEFAULT_MIN_PRICE = 7;
     const BACKUP_TIME_KEY = 'TEMU_SCRAPED_SHOPS_LAST_BACKUP_TIME';
     const BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
     const GITHUB_SYNC_CONFIG_KEY = 'TEMU_SCRAPED_SHOPS_GITHUB_SYNC_CONFIG';
@@ -95,6 +99,24 @@
     function getSelectedImageFormat() {
         const select = document.getElementById('image-format-select') || formatSelect;
         return normalizeImageFormat(select ? select.value : getSavedImageFormat());
+    }
+
+    function normalizeMinSales(value, fallback = DEFAULT_MIN_SALES) {
+        const num = parseInt(value, 10);
+        return Number.isFinite(num) && num >= 0 ? num : fallback;
+    }
+
+    function getSavedMinSales() {
+        return normalizeMinSales(GM_getValue(MIN_SALES_KEY, DEFAULT_MIN_SALES));
+    }
+
+    function normalizeMinPrice(value, fallback = DEFAULT_MIN_PRICE) {
+        const num = parseFloat(value);
+        return Number.isFinite(num) && num >= 0 ? num : fallback;
+    }
+
+    function getSavedMinPrice() {
+        return normalizeMinPrice(GM_getValue(MIN_PRICE_KEY, DEFAULT_MIN_PRICE));
     }
 
     // 获取已抓取店铺列表
@@ -408,11 +430,15 @@
     filterDiv.style.cssText = 'display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; font-size: 13px; color: #333; padding: 0 5px;';
     filterDiv.innerHTML = `<span>最小销量:</span><input type="number" id="min-sales-input" value="10" min="0" style="width: 70px; padding: 4px; border: 1px solid #ddd; border-radius: 4px; text-align: center;">`;
     panel.appendChild(filterDiv);
+    const minSalesInput = filterDiv.querySelector('#min-sales-input');
+    minSalesInput.value = getSavedMinSales();
 
     const priceFilterDiv = document.createElement('div');
     priceFilterDiv.style.cssText = 'display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; font-size: 13px; color: #333; padding: 0 5px;';
     priceFilterDiv.innerHTML = `<span>最小价格:</span><input type="number" id="min-price-input" value="7" min="0" step="0.01" style="width: 70px; padding: 4px; border: 1px solid #ddd; border-radius: 4px; text-align: center;">`;
     panel.appendChild(priceFilterDiv);
+    const minPriceInput = priceFilterDiv.querySelector('#min-price-input');
+    minPriceInput.value = getSavedMinPrice();
 
     // 下载间隔
     const intervalDiv = document.createElement('div');
@@ -585,6 +611,12 @@
     formatSelect.onchange = (event) => {
         GM_setValue(IMAGE_FORMAT_KEY, normalizeImageFormat(event.target.value));
         updateStatusText('已切换图片格式');
+    };
+    minSalesInput.oninput = (event) => {
+        GM_setValue(MIN_SALES_KEY, normalizeMinSales(event.target.value, 0));
+    };
+    minPriceInput.oninput = (event) => {
+        GM_setValue(MIN_PRICE_KEY, normalizeMinPrice(event.target.value, 0));
     };
 
     // --- 逻辑函数 ---
