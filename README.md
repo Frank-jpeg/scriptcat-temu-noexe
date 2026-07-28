@@ -38,6 +38,12 @@ git@github.com:Frank-jpeg/scriptcat-temu-noexe.git
 
 旧仓库地址 `jianpanlan0-svg/scriptcat-temu-noexe` 已转移到 `Frank-jpeg/scriptcat-temu-noexe`。不要在旧账号重新创建同名仓库，否则旧用户的自动更新重定向可能失效。
 
+## 上游对比
+
+4 个生命周期脚本 fork 自 https://www.goldabcd.com/temu.html ，去掉了本地下载器依赖。上游现状、差异清单和重新对比的方法见 [UPSTREAM.md](UPSTREAM.md)。
+
+注意本仓库的 `@version` 与上游日期无对应关系，判断是否落后要看代码，不能看版本号。
+
 ## 配置说明
 
 脚本默认配置为空。请求使用当前 TEMU 页面登录态和当前页面 mallId；店铺没配置时默认按全托运行。
