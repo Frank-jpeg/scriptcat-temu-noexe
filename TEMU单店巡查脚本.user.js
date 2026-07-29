@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEMU单店巡查脚本
 // @namespace    https://local.temu.single.inspector
-// @version      1.9.7
+// @version      1.9.8
 // @description  单店铺 TEMU 巡查：抽检结果、JIT 逾期、合规中心、违规信息、VMI 未收货、价格申报、退货包裹、资金余额
 // @match        https://agentseller.temu.com/*
 // @match        https://seller.kuajingmaihuo.com/*
@@ -17,7 +17,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '1.9.7';
+  const SCRIPT_VERSION = '1.9.8';
   const APP_ID = '__temu_single_store_script_v8';
   const PANEL_ID = `${APP_ID}_panel`;
   const RESULT_DIALOG_ID = `${APP_ID}_result_dialog`;
@@ -3113,6 +3113,34 @@
     }
   }
 
+  async function startPriceRuleOnlyFromUi() {
+    if (uiActionPending) {
+      return;
+    }
+    uiActionPending = true;
+    try {
+      const currentJob = await loadJob();
+      if (currentJob && currentJob.status === 'running') {
+        return;
+      }
+      const config = await readConfigFromUi();
+      const selectedChecks = Object.fromEntries(CHECK_ITEMS.map((item) => [item.key, item.key === 'price_rule']));
+      const job = createJob(Object.assign({}, config, { selectedChecks }));
+      await saveConfig(config);
+      await saveJob(job);
+      await appendJobLog('INFO', `价格规则已加载 ${job.ruleConfig.rules.length} 条`);
+      await appendJobLog('INFO', '开始单项执行：价格申报自动助手');
+      await continueJob();
+    } catch (error) {
+      const message = String(error && error.message ? error.message : error);
+      alert(`价格申报启动失败：${message}`);
+      console.error(error);
+    } finally {
+      uiActionPending = false;
+      scheduleRender();
+    }
+  }
+
   async function stopJobFromUi() {
     if (uiActionPending) {
       return;
@@ -3380,6 +3408,7 @@
       <div id="${APP_ID}_body" style="padding:10px;">
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
           <button data-role="start" style="${buttonStyle('#0f766e')}">开始巡查</button>
+          <button data-role="start-price-rule" style="${buttonStyle('#2563eb')}">只跑价格申报</button>
           <button data-role="stop" style="${buttonStyle('#b45309')}">停止</button>
           <button data-role="copy" style="${buttonStyle('#374151')}">复制摘要</button>
           <button data-role="clear" style="${buttonStyle('#4b5563')}">清空结果</button>
@@ -3447,6 +3476,7 @@
 
     document.body.appendChild(panel);
     panel.querySelector('[data-role="start"]').addEventListener('click', () => startJobFromUi().catch(console.error));
+    panel.querySelector('[data-role="start-price-rule"]').addEventListener('click', () => startPriceRuleOnlyFromUi().catch(console.error));
     panel.querySelector('[data-role="stop"]').addEventListener('click', () => stopJobFromUi().catch(console.error));
     panel.querySelector('[data-role="copy"]').addEventListener('click', () => copySummaryFromUi().catch(console.error));
     panel.querySelector('[data-role="clear"]').addEventListener('click', () => clearResultFromUi().catch(console.error));
@@ -3555,6 +3585,9 @@
     }
     GM_registerMenuCommand('TEMU单店巡查脚本：开始当前店铺', () => {
       startJobFromUi().catch(console.error);
+    });
+    GM_registerMenuCommand('TEMU单店巡查脚本：只跑价格申报', () => {
+      startPriceRuleOnlyFromUi().catch(console.error);
     });
     GM_registerMenuCommand('TEMU单店巡查脚本：停止', () => {
       stopJobFromUi().catch(console.error);
