@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEMU单店巡查脚本
 // @namespace    https://local.temu.single.inspector
-// @version      1.9.8
+// @version      1.9.9
 // @description  单店铺 TEMU 巡查：抽检结果、JIT 逾期、合规中心、违规信息、VMI 未收货、价格申报、退货包裹、资金余额
 // @match        https://agentseller.temu.com/*
 // @match        https://seller.kuajingmaihuo.com/*
@@ -17,7 +17,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '1.9.8';
+  const SCRIPT_VERSION = '1.9.9';
   const APP_ID = '__temu_single_store_script_v8';
   const PANEL_ID = `${APP_ID}_panel`;
   const RESULT_DIALOG_ID = `${APP_ID}_result_dialog`;
@@ -87,6 +87,7 @@
     protectDiff: true,
     protectDiffLimit: 1,
     ruleText: rulesToText(DEFAULT_RULES),
+    lastValidRuleText: rulesToText(DEFAULT_RULES),
   };
 
   let panelBooted = false;
@@ -405,10 +406,49 @@
       return {
         ok: false,
         count: 0,
-        text: `规则未生效：${String(error && error.message ? error.message : error)}`,
+        text: `规则未保存：${String(error && error.message ? error.message : error)}`,
         color: '#fca5a5',
       };
     }
+  }
+
+  function getValidRuleText(text) {
+    const value = String(text || '');
+    try {
+      textToRules(value);
+      return value;
+    } catch (_error) {
+      return '';
+    }
+  }
+
+  function pickValidRuleText(...candidates) {
+    for (const candidate of candidates) {
+      const validText = getValidRuleText(candidate);
+      if (validText) {
+        return validText;
+      }
+    }
+    return rulesToText(DEFAULT_RULES);
+  }
+
+  function normalizeConfigRules(config, stored) {
+    const next = Object.assign({}, config || {});
+    const validRuleText = getValidRuleText(next.ruleText);
+    if (validRuleText) {
+      next.ruleText = validRuleText;
+      next.lastValidRuleText = validRuleText;
+      return { config: next, repaired: false };
+    }
+    const fallbackRuleText = pickValidRuleText(
+      next.lastValidRuleText,
+      stored && stored.lastValidRuleText,
+      stored && stored.ruleText,
+      DEFAULT_CONFIG.lastValidRuleText,
+    );
+    next.ruleText = fallbackRuleText;
+    next.lastValidRuleText = fallbackRuleText;
+    return { config: next, repaired: true };
   }
 
   function renderRuleStatus(panel, text) {
@@ -474,12 +514,29 @@
     merged.panelCollapsed = !!merged.panelCollapsed;
     merged.protectDiff = merged.protectDiff !== false;
     merged.protectDiffLimit = Math.max(0, toFloat(merged.protectDiffLimit, 1));
-    merged.ruleText = merged.ruleText || rulesToText(DEFAULT_RULES);
-    return merged;
+    const normalized = normalizeConfigRules(merged, stored);
+    if (normalized.repaired && stored) {
+      await gmSet(CONFIG_KEY, normalized.config);
+    }
+    return normalized.config;
   }
 
   async function saveConfig(config) {
-    await gmSet(CONFIG_KEY, config);
+    const stored = await gmGet(CONFIG_KEY, null);
+    const merged = Object.assign({}, DEFAULT_CONFIG, stored || {}, config || {});
+    merged.selectedChecks = Object.assign(
+      {},
+      DEFAULT_CONFIG.selectedChecks,
+      stored && stored.selectedChecks || {},
+      config && config.selectedChecks || {},
+    );
+    merged.lowPriorityVisible = !!merged.lowPriorityVisible;
+    merged.panelCollapsed = !!merged.panelCollapsed;
+    merged.protectDiff = merged.protectDiff !== false;
+    merged.protectDiffLimit = Math.max(0, toFloat(merged.protectDiffLimit, 1));
+    const normalized = normalizeConfigRules(merged, stored);
+    await gmSet(CONFIG_KEY, normalized.config);
+    return normalized.config;
   }
 
   async function loadJob() {
@@ -3095,8 +3152,9 @@
       if (!Object.values(config.selectedChecks || {}).some(Boolean)) {
         throw new Error('请至少勾选一个巡查项目');
       }
-      const job = createJob(config);
-      await saveConfig(config);
+      blurRuleTextEditor();
+      const savedConfig = await saveConfig(config);
+      const job = createJob(savedConfig);
       await saveJob(job);
       if (job.enabledChecks.price_rule) {
         await appendJobLog('INFO', `价格规则已加载 ${job.ruleConfig.rules.length} 条`);
@@ -3125,8 +3183,9 @@
       }
       const config = await readConfigFromUi();
       const selectedChecks = Object.fromEntries(CHECK_ITEMS.map((item) => [item.key, item.key === 'price_rule']));
-      const job = createJob(Object.assign({}, config, { selectedChecks }));
-      await saveConfig(config);
+      blurRuleTextEditor();
+      const savedConfig = await saveConfig(config);
+      const job = createJob(Object.assign({}, savedConfig, { selectedChecks }));
       await saveJob(job);
       await appendJobLog('INFO', `价格规则已加载 ${job.ruleConfig.rules.length} 条`);
       await appendJobLog('INFO', '开始单项执行：价格申报自动助手');
@@ -3195,9 +3254,21 @@
       return;
     }
     const config = await readConfigFromUi();
-    await saveConfig(config);
-    renderRuleStatus(panel, config.ruleText);
+    const savedConfig = await saveConfig(config);
+    const ruleTextInput = panel.querySelector('[data-role="rule-text"]');
+    if (ruleTextInput && savedConfig.ruleText !== config.ruleText) {
+      ruleTextInput.value = savedConfig.ruleText;
+    }
+    renderRuleStatus(panel, savedConfig.ruleText);
     scheduleRender();
+  }
+
+  function blurRuleTextEditor() {
+    const panel = document.getElementById(PANEL_ID);
+    const ruleTextInput = panel && panel.querySelector('[data-role="rule-text"]');
+    if (ruleTextInput && document.activeElement === ruleTextInput) {
+      ruleTextInput.blur();
+    }
   }
 
   async function readConfigFromUi() {
@@ -3363,6 +3434,7 @@
 
     const running = job && job.status === 'running';
     panel.querySelector('[data-role="start"]').disabled = running || uiActionPending;
+    panel.querySelector('[data-role="start-price-rule"]').disabled = running || uiActionPending;
     panel.querySelector('[data-role="stop"]').disabled = !running || uiActionPending;
   }
 
@@ -3519,7 +3591,10 @@
 
     const ruleTextInput = panel.querySelector('[data-role="rule-text"]');
     ruleTextInput.addEventListener('input', async () => {
-      renderRuleStatus(panel, ruleTextInput.value);
+      const ruleState = renderRuleStatus(panel, ruleTextInput.value);
+      if (!ruleState || !ruleState.ok) {
+        return;
+      }
       const nextConfig = await readConfigFromUi();
       await saveConfig(nextConfig);
     });
