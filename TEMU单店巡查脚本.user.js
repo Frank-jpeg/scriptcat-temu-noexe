@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEMU单店巡查脚本
 // @namespace    https://local.temu.single.inspector
-// @version      1.9.9
+// @version      1.9.10
 // @description  单店铺 TEMU 巡查：抽检结果、JIT 逾期、合规中心、违规信息、VMI 未收货、价格申报、退货包裹、资金余额
 // @match        https://agentseller.temu.com/*
 // @match        https://seller.kuajingmaihuo.com/*
@@ -17,7 +17,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '1.9.9';
+  const SCRIPT_VERSION = '1.9.10';
   const APP_ID = '__temu_single_store_script_v8';
   const PANEL_ID = `${APP_ID}_panel`;
   const RESULT_DIALOG_ID = `${APP_ID}_result_dialog`;
@@ -444,6 +444,7 @@
       next.lastValidRuleText,
       stored && stored.lastValidRuleText,
       stored && stored.ruleText,
+      stored && stored.jobRuleText,
       DEFAULT_CONFIG.lastValidRuleText,
     );
     next.ruleText = fallbackRuleText;
@@ -514,7 +515,10 @@
     merged.panelCollapsed = !!merged.panelCollapsed;
     merged.protectDiff = merged.protectDiff !== false;
     merged.protectDiffLimit = Math.max(0, toFloat(merged.protectDiffLimit, 1));
-    const normalized = normalizeConfigRules(merged, stored);
+    const fallbackSource = getValidRuleText(merged.ruleText)
+      ? stored
+      : Object.assign({}, stored || {}, { jobRuleText: await loadJobRuleTextFallback() });
+    const normalized = normalizeConfigRules(merged, fallbackSource);
     if (normalized.repaired && stored) {
       await gmSet(CONFIG_KEY, normalized.config);
     }
@@ -534,9 +538,18 @@
     merged.panelCollapsed = !!merged.panelCollapsed;
     merged.protectDiff = merged.protectDiff !== false;
     merged.protectDiffLimit = Math.max(0, toFloat(merged.protectDiffLimit, 1));
-    const normalized = normalizeConfigRules(merged, stored);
+    const fallbackSource = getValidRuleText(merged.ruleText)
+      ? stored
+      : Object.assign({}, stored || {}, { jobRuleText: await loadJobRuleTextFallback() });
+    const normalized = normalizeConfigRules(merged, fallbackSource);
     await gmSet(CONFIG_KEY, normalized.config);
     return normalized.config;
+  }
+
+  async function loadJobRuleTextFallback() {
+    const job = await gmGet(JOB_KEY, null);
+    const rules = job && job.ruleConfig && Array.isArray(job.ruleConfig.rules) ? job.ruleConfig.rules : [];
+    return rules.length ? rulesToText(rules) : '';
   }
 
   async function loadJob() {
