@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEMU单店巡查脚本
 // @namespace    https://local.temu.single.inspector
-// @version      1.9.10
+// @version      1.9.11
 // @description  单店铺 TEMU 巡查：抽检结果、JIT 逾期、合规中心、违规信息、VMI 未收货、价格申报、退货包裹、资金余额
 // @match        https://agentseller.temu.com/*
 // @match        https://seller.kuajingmaihuo.com/*
@@ -17,7 +17,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '1.9.10';
+  const SCRIPT_VERSION = '1.9.11';
   const APP_ID = '__temu_single_store_script_v8';
   const PANEL_ID = `${APP_ID}_panel`;
   const RESULT_DIALOG_ID = `${APP_ID}_result_dialog`;
@@ -28,6 +28,7 @@
   const WITHDRAW_ALERT_THRESHOLD = 2000;
   const ARRIVAL_OVERDUE_RECENT_DAYS = 4;
   const LOW_DECLARED_PRICE_THRESHOLD = 10;
+  const PRICE_RULE_MAX_ATTEMPTS = 3;
   const TEMU_URGENT_LIST_API = 'https://agentseller.temu.com/mms/venom/api/supplier/purchase/manager/querySubOrderList';
   const URGENT_DELAY_STATUS = {
     deliverSoon: 101,
@@ -590,6 +591,58 @@
     }
     job.currentMessage = message;
     await saveJob(job);
+  }
+
+  function shouldRetryPriceRule(result) {
+    if (!result || !result.confirmPending) {
+      return false;
+    }
+    const message = normalize(result.message);
+    return result.stage === 'confirm_failed' && message.includes('后续确认弹窗未自动完成');
+  }
+
+  function summarizePriceRuleAttempt(result, attemptNo) {
+    return {
+      attemptNo,
+      stage: result && result.stage || '',
+      message: result && result.message || '',
+      waitingCount: toInt(result && result.waitingCount),
+      matchedCount: toInt(result && result.matchedCount),
+      actedCount: toInt(result && result.actedCount),
+      remainingCount: toInt(result && result.remainingCount),
+      confirmed: !!(result && result.confirmed),
+      confirmPending: !!(result && result.confirmPending),
+    };
+  }
+
+  async function savePriceRuleRetryState(jobId, attempts, nextAttempt) {
+    const job = await loadJob();
+    if (!job || job.id !== jobId || job.status !== 'running') {
+      return;
+    }
+    job.priceRuleRetry = {
+      nextAttempt,
+      maxAttempts: PRICE_RULE_MAX_ATTEMPTS,
+      attempts: attempts.slice(-PRICE_RULE_MAX_ATTEMPTS),
+    };
+    job.currentMessage = `价格申报第${nextAttempt - 1}轮后续确认未完成，准备第${nextAttempt}/${PRICE_RULE_MAX_ATTEMPTS}轮重跑...`;
+    await saveJob(job);
+  }
+
+  async function clearPriceRuleRetryState(jobId) {
+    const job = await loadJob();
+    if (!job || job.id !== jobId) {
+      return;
+    }
+    if (job.priceRuleRetry) {
+      delete job.priceRuleRetry;
+      await saveJob(job);
+    }
+  }
+
+  function reloadPriceRulePageForRetry() {
+    const retryUrl = `${URLS.price_rule}${URLS.price_rule.includes('?') ? '&' : '?'}temu_price_retry=${Date.now()}`;
+    location.assign(retryUrl);
   }
 
   async function markJobStopped(reason) {
@@ -2998,8 +3051,34 @@
     if (!await ensureAccessReady(job.id)) {
       return null;
     }
+    const retryState = job.priceRuleRetry || {};
+    const attemptNo = Math.min(
+      PRICE_RULE_MAX_ATTEMPTS,
+      Math.max(1, toInt(retryState.nextAttempt, 1)),
+    );
+    const previousAttempts = Array.isArray(retryState.attempts) ? retryState.attempts.slice(0, PRICE_RULE_MAX_ATTEMPTS) : [];
+    await updateJobMessage(`价格申报自动助手：第${attemptNo}/${PRICE_RULE_MAX_ATTEMPTS}轮准备中...`);
     await waitPriceRuleReady(job.id);
     const result = await runPriceRuleAssistantOnPage(job.id, job.ruleConfig);
+    const attempts = previousAttempts.concat(summarizePriceRuleAttempt(result, attemptNo));
+    if (shouldRetryPriceRule(result) && attemptNo < PRICE_RULE_MAX_ATTEMPTS) {
+      await appendJobLog('WARN', `价格申报第${attemptNo}轮后续确认未完成，刷新后重跑第${attemptNo + 1}轮`);
+      await savePriceRuleRetryState(job.id, attempts, attemptNo + 1);
+      await checkedSleep(job.id, 800, 120);
+      reloadPriceRulePageForRetry();
+      return null;
+    }
+    await clearPriceRuleRetryState(job.id);
+    if (attempts.length > 1) {
+      result.attemptCount = attemptNo;
+      result.maxAttempts = PRICE_RULE_MAX_ATTEMPTS;
+      result.attempts = attempts;
+      if (shouldRetryPriceRule(result)) {
+        result.message = `已重跑${attemptNo}轮，后续确认弹窗仍未自动完成，请人工确认`;
+      } else if (result.message) {
+        result.message = `第${attemptNo}轮完成：${result.message}`;
+      }
+    }
     return { completed: true, data: result };
   }
 
