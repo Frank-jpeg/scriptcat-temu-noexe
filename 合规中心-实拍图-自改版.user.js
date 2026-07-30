@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         合规中心-实拍图-自改版
 // @namespace    https://www.goldabcd.com/
-// @description  合规中心-实拍图（自改版，无需下载器EXE，使用模板SPU图片URL提交）
+// @description  合规中心-实拍图（自改版，无需下载器EXE，支持模板SPU或本地上传图片提交）
 // @author       TonyTonyYang
 // @match        https://agentseller.temu.com/govern/compliant-live-photos*
 // @grant        GM_getValue
@@ -11,11 +11,14 @@
 // @run-at       document-idle
 // @downloadURL  https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/%E5%90%88%E8%A7%84%E4%B8%AD%E5%BF%83-%E5%AE%9E%E6%8B%8D%E5%9B%BE-%E8%87%AA%E6%94%B9%E7%89%88.user.js
 // @updateURL    https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/%E5%90%88%E8%A7%84%E4%B8%AD%E5%BF%83-%E5%AE%9E%E6%8B%8D%E5%9B%BE-%E8%87%AA%E6%94%B9%E7%89%88.user.js
-// @version      2026.0730.4
+// @version      2026.0730.6
 // ==/UserScript==
 
 const REAL_PHOTO_CONFIG_KEY = "goldabcd_noexe_real_photo_config_v1";
 const REAL_PHOTO_SPU_INPUT_KEY = "goldabcd_noexe_real_photo_spu_input_v1";
+const REAL_PHOTO_SOURCE_MODE_KEY = "goldabcd_noexe_real_photo_source_mode_v1";
+const REAL_PHOTO_MAX_IMAGE_SIZE = 3 * 1024 * 1024;
+const REAL_PHOTO_SPU_QUERY_BATCH_SIZE = 50;
 const REAL_PHOTO_DEFAULT_CONFIG = {
     "version": 1,
     "templateSpuMap": {
@@ -150,6 +153,45 @@ async function postTemu(url, data) {
     return result;
 }
 
+async function getTemuUploadSign(mallId) {
+    const result = await postTemu("https://agentseller.temu.com/ms/bg-flux-ms/compliance_property/signature", { tag: "flash-tag" });
+    const sign = result && result.result && (result.result.signature || result.result.upload_sign || result.result.sign || result.result);
+    if (!result || !result.success || !sign) {
+        throw new Error((result && result.error_msg) || "获取图片上传签名失败");
+    }
+    return sign;
+}
+
+async function uploadTemuImage(file) {
+    if (!file || !file.type || !file.type.startsWith("image/")) {
+        throw new Error("只能上传图片文件：" + (file && file.name ? file.name : ""));
+    }
+    if (file.size > REAL_PHOTO_MAX_IMAGE_SIZE) {
+        throw new Error(file.name + " 超过 3MB，请先压缩后再上传");
+    }
+    const uploadSign = await getTemuUploadSign(window.mallId || localStorage.getItem("agentseller-mall-info-id") || "");
+    const body = new FormData();
+    body.append("url_width_height", "true");
+    body.append("image", file);
+    body.append("upload_sign", uploadSign);
+    const res = await fetch("https://agentseller.temu.com/api/galerie/v3/store_image?sdk_version=js-0.0.37&tag_name=flash-tag", {
+        method: "POST",
+        credentials: "include",
+        body
+    });
+    let result;
+    try {
+        result = await res.json();
+    } catch (e) {
+        throw new Error("图片上传接口响应不是JSON：HTTP " + res.status);
+    }
+    const url = result && (result.url || result.image_url || (result.result && (result.result.url || result.result.image_url)));
+    if (!res.ok || !url) {
+        throw new Error((result && (result.error_msg || result.message)) || ("图片上传失败：HTTP " + res.status));
+    }
+    return String(url).startsWith("//") ? "https:" + url : String(url);
+}
+
 function registerRealPhotoConfigMenu() {
     if (typeof GM_registerMenuCommand !== "function") return;
     GM_registerMenuCommand("实拍图自改版：设置图片来源SPU", async function() {
@@ -258,17 +300,64 @@ function cloneRealPhoto(value) {
     // 创建容器
     let container = document.createElement("div");
     container.id = "workarea";
-    container.style="z-index:9999;position: absolute;top: 30px;left: 0px;width: 430px;background-color: lightgreen;padding: 8px;display:none;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);";
+    container.style="z-index:9999;position:fixed;top:72px;left:0;width:460px;max-height:calc(100vh - 90px);overflow:auto;background-color:lightgreen;padding:8px;display:block;border-radius:0 8px 8px 0;box-shadow:0 8px 24px rgba(0,0,0,.18);transition:transform .18s ease;";
 
-    const pTitle = document.createElement("p");
+    const titleBar = document.createElement("div");
+    titleBar.style = "display:flex;align-items:center;justify-content:space-between;margin:4px 0 8px 0;";
+    const pTitle = document.createElement("div");
     pTitle.textContent = "刷实拍图-自改版";
-    pTitle.style="text-align: center;font-weight:bold;margin:4px 0 8px 0;";
-    container.appendChild(pTitle);
+    pTitle.style="font-weight:bold;flex:1;text-align:center;";
+    const collapseButton = document.createElement("button");
+    collapseButton.textContent = "收起";
+    collapseButton.style = "height:26px;background:#1677ff;color:#fff;border:0;border-radius:6px;padding:0 10px;cursor:pointer;";
+    titleBar.appendChild(pTitle);
+    titleBar.appendChild(collapseButton);
+    container.appendChild(titleBar);
 
     const guideDiv = document.createElement("div");
-    guideDiv.textContent = "第1步填图片来源模板SPU，第2步粘贴要提交的目标SPU，第3步点提交。";
+    guideDiv.textContent = "先选图片来源：可用模板SPU复刻，也可自己上传图片。目标SPU一行一个。";
     guideDiv.style = "font-size:12px;color:#333;background:#fff7d6;border:1px solid #f59e0b;border-radius:6px;padding:6px;margin:5px;";
     container.appendChild(guideDiv);
+
+    let sourceMode = localStorage.getItem(REAL_PHOTO_SOURCE_MODE_KEY) === "upload" ? "upload" : "template";
+    let uploadedPhotoGroupsCache = null;
+    const uploadInputs = {};
+    const uploadSlots = [
+        { key: "subjectFront", title: "商品主体-正视图", position: 1, positionType: 2, max: 1 },
+        { key: "subjectSide", title: "商品主体-侧视图", position: 1, positionType: 3, max: 2 },
+        { key: "subjectLabel", title: "商品主体-标签图", position: 1, positionType: 4, max: 20 },
+        { key: "subjectOther", title: "商品主体-其他图", position: 1, positionType: 5, max: 10 },
+        { key: "packageFront", title: "外包装-正视图", position: 2, positionType: 2, max: 1 },
+        { key: "packageSide", title: "外包装-侧视图", position: 2, positionType: 3, max: 2 },
+        { key: "packageLabel", title: "外包装-标签图", position: 2, positionType: 4, max: 12 },
+        { key: "packageOther", title: "外包装-其他图", position: 2, positionType: 5, max: 10 }
+    ];
+
+    const sourceModeDiv = document.createElement("div");
+    sourceModeDiv.style = "display:flex;gap:10px;align-items:center;margin:5px;padding:6px;background:#fff;border-radius:6px;border:1px solid #ddd;";
+    const sourceModeLabel = document.createElement("span");
+    sourceModeLabel.textContent = "图片来源：";
+    sourceModeLabel.style = "font-weight:bold;";
+    const templateModeLabel = document.createElement("label");
+    templateModeLabel.style = "cursor:pointer;";
+    const templateModeRadio = document.createElement("input");
+    templateModeRadio.type = "radio";
+    templateModeRadio.name = "realPhotoSourceMode";
+    templateModeRadio.value = "template";
+    templateModeLabel.appendChild(templateModeRadio);
+    templateModeLabel.appendChild(document.createTextNode(" 模板SPU复刻"));
+    const uploadModeLabel = document.createElement("label");
+    uploadModeLabel.style = "cursor:pointer;";
+    const uploadModeRadio = document.createElement("input");
+    uploadModeRadio.type = "radio";
+    uploadModeRadio.name = "realPhotoSourceMode";
+    uploadModeRadio.value = "upload";
+    uploadModeLabel.appendChild(uploadModeRadio);
+    uploadModeLabel.appendChild(document.createTextNode(" 自己上传图片"));
+    sourceModeDiv.appendChild(sourceModeLabel);
+    sourceModeDiv.appendChild(templateModeLabel);
+    sourceModeDiv.appendChild(uploadModeLabel);
+    container.appendChild(sourceModeDiv);
 
     const divTemplateInput = document.createElement("div");
     divTemplateInput.style = "width:100%;margin:5px;";
@@ -302,6 +391,72 @@ function cloneRealPhoto(value) {
     divTemplateInput.appendChild(templateSpuInput);
     divTemplateInput.appendChild(saveTemplateButton);
     container.appendChild(divTemplateInput);
+
+    const divUploadInput = document.createElement("div");
+    divUploadInput.style = "width:100%;margin:5px;background:#fff;border:1px solid #ddd;border-radius:6px;padding:6px;box-sizing:border-box;";
+    const uploadTip = document.createElement("div");
+    uploadTip.textContent = "自己上传图片：每张不超过3MB。选择后点提交，脚本会先上传图片，再提交给目标SPU。";
+    uploadTip.style = "font-size:12px;color:#333;margin-bottom:6px;";
+    divUploadInput.appendChild(uploadTip);
+
+    function createUploadSlot(slot) {
+        const row = document.createElement("div");
+        row.style = "display:flex;align-items:center;gap:6px;margin:5px 0;";
+        const label = document.createElement("label");
+        label.textContent = slot.title + "：";
+        label.style = "width:120px;font-size:12px;";
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = "image/*";
+        input.multiple = slot.max > 1;
+        input.style = "width:230px;font-size:12px;";
+        const count = document.createElement("span");
+        count.textContent = "0/" + slot.max;
+        count.style = "font-size:12px;color:#666;";
+        input.onchange = function() {
+            const files = Array.from(input.files || []);
+            uploadedPhotoGroupsCache = null;
+            if (files.length > slot.max) {
+                alert(slot.title + "最多选择 " + slot.max + " 张");
+                input.value = "";
+                count.textContent = "0/" + slot.max;
+                return;
+            }
+            const tooLarge = files.find(function(file) { return file.size > REAL_PHOTO_MAX_IMAGE_SIZE; });
+            if (tooLarge) {
+                alert(tooLarge.name + " 超过3MB，请压缩后再选");
+                input.value = "";
+                count.textContent = "0/" + slot.max;
+                return;
+            }
+            count.textContent = files.length + "/" + slot.max;
+        };
+        uploadInputs[slot.key] = input;
+        row.appendChild(label);
+        row.appendChild(input);
+        row.appendChild(count);
+        return row;
+    }
+
+    uploadSlots.forEach(function(slot) {
+        divUploadInput.appendChild(createUploadSlot(slot));
+    });
+    container.appendChild(divUploadInput);
+
+    function setSourceMode(nextMode) {
+        sourceMode = nextMode === "upload" ? "upload" : "template";
+        localStorage.setItem(REAL_PHOTO_SOURCE_MODE_KEY, sourceMode);
+        templateModeRadio.checked = sourceMode === "template";
+        uploadModeRadio.checked = sourceMode === "upload";
+        divTemplateInput.style.display = sourceMode === "template" ? "block" : "none";
+        divUploadInput.style.display = sourceMode === "upload" ? "block" : "none";
+        guideDiv.textContent = sourceMode === "upload"
+            ? "上传模式：选择本地图片，目标SPU一行一个，然后点提交。模板SPU不会被使用。"
+            : "模板模式：填写已有实拍图的模板SPU，目标SPU一行一个，然后点提交。";
+    }
+    templateModeRadio.onchange = function() { setSourceMode("template"); };
+    uploadModeRadio.onchange = function() { setSourceMode("upload"); };
+    setSourceMode(sourceMode);
 
     const divSelect = document.createElement("div");
     divSelect.style="width:100%;display:none;margin: 5px;";
@@ -340,7 +495,51 @@ function cloneRealPhoto(value) {
     spuInput.addEventListener("input", function() {
         localStorage.setItem(REAL_PHOTO_SPU_INPUT_KEY, spuInput.value);
     });
+    const spuImportRow = document.createElement("div");
+    spuImportRow.style = "display:flex;align-items:center;gap:6px;margin-bottom:6px;";
+    const importSpuButton = document.createElement("button");
+    importSpuButton.textContent = "导入TXT/CSV";
+    importSpuButton.style = "height:28px;background:#1677ff;color:#fff;border:0;border-radius:6px;padding:0 10px;cursor:pointer;";
+    const clearSpuButton = document.createElement("button");
+    clearSpuButton.textContent = "清空SPU";
+    clearSpuButton.style = "height:28px;background:#666;color:#fff;border:0;border-radius:6px;padding:0 10px;cursor:pointer;";
+    const importSpuTip = document.createElement("span");
+    importSpuTip.textContent = "大量SPU建议用TXT/CSV，一行一个";
+    importSpuTip.style = "font-size:12px;color:#555;";
+    const spuFileInput = document.createElement("input");
+    spuFileInput.type = "file";
+    spuFileInput.accept = ".txt,.csv,text/plain,text/csv";
+    spuFileInput.style = "display:none;";
+    importSpuButton.onclick = function() {
+        spuFileInput.click();
+    };
+    clearSpuButton.onclick = function() {
+        if (!confirm("确认清空目标SPU？")) return;
+        spuInput.value = "";
+        localStorage.removeItem(REAL_PHOTO_SPU_INPUT_KEY);
+        infoDiv.textContent = "目标SPU已清空";
+    };
+    spuFileInput.onchange = async function() {
+        const file = spuFileInput.files && spuFileInput.files[0];
+        if (!file) return;
+        const text = await file.text();
+        const ids = parseIdList(text);
+        if (!ids.length) {
+            alert("文件里没有识别到SPU");
+            spuFileInput.value = "";
+            return;
+        }
+        spuInput.value = ids.join("\n");
+        localStorage.setItem(REAL_PHOTO_SPU_INPUT_KEY, spuInput.value);
+        infoDiv.textContent = "已导入SPU：" + ids.length + "个";
+        spuFileInput.value = "";
+    };
+    spuImportRow.appendChild(importSpuButton);
+    spuImportRow.appendChild(clearSpuButton);
+    spuImportRow.appendChild(importSpuTip);
     divSpuInput.appendChild(spuInputLabel);
+    divSpuInput.appendChild(spuImportRow);
+    divSpuInput.appendChild(spuFileInput);
     divSpuInput.appendChild(spuInput);
     container.appendChild(divSpuInput);
 
@@ -348,8 +547,9 @@ function cloneRealPhoto(value) {
     divModelInput.style="width:100%;display:flow-root;";
     const buttonSubmit = document.createElement("button");
     buttonSubmit.onclick = async function(){
-        if (!await ensureTemplateReady()) return;
-        await mainFun(null, {ignorePanelInputs: true});
+        const photoGroups = await ensurePhotoSourceReady();
+        if (!photoGroups) return;
+        await mainFun(null, {ignorePanelInputs: true, photoGroups});
     };
     buttonSubmit.textContent = "按状态提交";
     buttonSubmit.style="float: right;width: 80px;height: 30px;background-color: #fb7701;color: white;border: none;border-radius: 6px;cursor:pointer";
@@ -362,8 +562,9 @@ function cloneRealPhoto(value) {
             alert("请先输入SPU，一行一个");
             return;
         }
-        if (!await ensureTemplateReady()) return;
-        await mainFun(spu_id_list, {ignorePanelInputs: true});
+        const photoGroups = await ensurePhotoSourceReady();
+        if (!photoGroups) return;
+        await mainFun(spu_id_list, {ignorePanelInputs: true, photoGroups});
     };
     buttonSubmitInput.textContent = "提交这些SPU";
     buttonSubmitInput.style="float: right;margin-right:5px;width: 110px;height: 30px;background-color: #fb7701;color: white;border: none;border-radius: 6px;cursor:pointer";
@@ -383,8 +584,14 @@ function cloneRealPhoto(value) {
 				}
 			}
         }
-        if (!await ensureTemplateReady()) return;
-        await mainFun(spu_id_list, {ignorePanelInputs: true});
+        if(spu_id_list.length === 0){
+            infoDiv.textContent = "没有识别到勾选SPU，请改用目标SPU输入框";
+            alert("没有识别到勾选SPU，请改用目标SPU输入框");
+            return;
+        }
+        const photoGroups = await ensurePhotoSourceReady();
+        if (!photoGroups) return;
+        await mainFun(spu_id_list, {ignorePanelInputs: true, photoGroups});
     };
     buttonSubmit2.textContent = "按勾选提交";
     buttonSubmit2.style="float: right;margin-right:5px;width: 80px;height: 30px;background-color: #fb7701;color: white;border: none;border-radius: 6px;cursor:pointer";
@@ -403,11 +610,22 @@ function cloneRealPhoto(value) {
 
     const launcherButton = document.createElement("button");
     launcherButton.textContent = "实拍图";
-    launcherButton.style = "z-index:9999;position:fixed;top:88px;left:12px;height:34px;background:#fb7701;color:#fff;border:0;border-radius:8px;padding:0 12px;font-weight:bold;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.2);";
+    launcherButton.style = "z-index:10000;position:fixed;top:88px;left:0;width:42px;min-height:82px;background:#fb7701;color:#fff;border:0;border-radius:0 8px 8px 0;padding:8px 6px;font-weight:bold;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.2);writing-mode:vertical-rl;letter-spacing:1px;transition:left .18s ease;";
+    let drawerOpen = false;
+    function setDrawerOpen(open) {
+        drawerOpen = !!open;
+        container.style.transform = drawerOpen ? "translateX(0)" : "translateX(-485px)";
+        launcherButton.style.left = drawerOpen ? "460px" : "0";
+        launcherButton.textContent = drawerOpen ? "收起" : "实拍图";
+    }
     launcherButton.onclick = function() {
-        container.style.display = container.style.display === "block" ? "none" : "block";
+        setDrawerOpen(!drawerOpen);
+    };
+    collapseButton.onclick = function() {
+        setDrawerOpen(false);
     };
     document.body.appendChild(launcherButton);
+    setDrawerOpen(false);
 
     let label_image_list = [];
 
@@ -473,6 +691,119 @@ function cloneRealPhoto(value) {
         }
     }
 
+    function addImageToGroup(groupMap, position, imageItem) {
+        const positionNum = Number(position);
+        if (!positionNum || !imageItem || !imageItem.image_url) return;
+        if (!groupMap.has(positionNum)) groupMap.set(positionNum, []);
+        groupMap.get(positionNum).push(imageItem);
+    }
+
+    function groupsFromMap(groupMap) {
+        return Array.from(groupMap.keys()).sort(function(a, b) { return a - b; }).map(function(position) {
+            return {
+                position,
+                image_list: groupMap.get(position)
+            };
+        }).filter(function(group) {
+            return group.image_list && group.image_list.length > 0;
+        });
+    }
+
+    function normalizeImageItem(imageUrl, positionType) {
+        const item = { image_url: String(imageUrl || "").trim() };
+        const positionTypeNum = Number(positionType);
+        if (!Number.isNaN(positionTypeNum) && positionTypeNum > 0) item.position_type = positionTypeNum;
+        return item;
+    }
+
+    function getTemplatePhotoGroups() {
+        const groupMap = new Map();
+        label_image_list.forEach(function(labelImage) {
+            const imageUrl = labelImage.image || labelImage.image_url;
+            if (!imageUrl) return;
+            addImageToGroup(groupMap, labelImage.position, normalizeImageItem(imageUrl, labelImage.position_type));
+        });
+        return groupsFromMap(groupMap);
+    }
+
+    async function ensureUploadedPhotosReady() {
+        if (uploadedPhotoGroupsCache && uploadedPhotoGroupsCache.length > 0) return uploadedPhotoGroupsCache;
+        const selected = [];
+        uploadSlots.forEach(function(slot) {
+            const input = uploadInputs[slot.key];
+            const files = input ? Array.from(input.files || []) : [];
+            if (files.length > slot.max) {
+                throw new Error(slot.title + "最多选择 " + slot.max + " 张");
+            }
+            files.forEach(function(file) {
+                selected.push({ slot, file });
+            });
+        });
+        if (selected.length === 0) {
+            alert("请先在上传模式里选择至少一张图片");
+            infoDiv.textContent = "请先选择要上传的图片";
+            return null;
+        }
+        const groupMap = new Map();
+        for (let i = 0; i < selected.length; i++) {
+            const item = selected[i];
+            infoDiv.textContent = "正在上传图片 " + (i + 1) + "/" + selected.length + "：" + item.file.name;
+            const uploadedUrl = await uploadTemuImage(item.file);
+            addImageToGroup(groupMap, item.slot.position, normalizeImageItem(uploadedUrl, item.slot.positionType));
+        }
+        uploadedPhotoGroupsCache = groupsFromMap(groupMap);
+        infoDiv.textContent = "图片上传完成：" + selected.length + "张";
+        return uploadedPhotoGroupsCache;
+    }
+
+    async function ensurePhotoSourceReady() {
+        try {
+            if (sourceMode === "upload") {
+                return await ensureUploadedPhotosReady();
+            }
+            if (!await ensureTemplateReady()) return null;
+            const templateGroups = getTemplatePhotoGroups();
+            if (!templateGroups.length) {
+                infoDiv.textContent = "模板SPU没有可提交的图片";
+                alert("模板SPU没有可提交的图片");
+                return null;
+            }
+            return templateGroups;
+        } catch (e) {
+            console.error(e);
+            infoDiv.textContent = e.message || "图片准备失败";
+            alert(e.message || "图片准备失败");
+            return null;
+        }
+    }
+
+    function cloneImageList(imageList) {
+        return imageList.map(function(imageItem) {
+            const cloned = { image_url: imageItem.image_url };
+            if (imageItem.position_type != null) cloned.position_type = imageItem.position_type;
+            return cloned;
+        });
+    }
+
+    function buildRealPictureBody(product, photoGroups) {
+        return {
+            spu_id: product.spu_id,
+            goods_id: product.goods_id,
+            real_picture_info_list: photoGroups.map(function(group) {
+                return {
+                    position: Number(group.position),
+                    is_same_sku: 1,
+                    sku_photo_info_list: (product.sku_info || []).map(function(sku) {
+                        return {
+                            sku_id: sku.sku_id,
+                            image_list: cloneImageList(group.image_list)
+                        };
+                    })
+                };
+            })
+        };
+    }
+
     let lastKeyPressTime = 0;
     //双击ctrl自动触发
     document.addEventListener('keydown', function(event) {
@@ -482,11 +813,7 @@ function cloneRealPhoto(value) {
         // 检查是否是Ctrl键，并且两次按键时间间隔小于阈值
         if ((event.key === 'Control' || event.keyCode === 17) && timeDiff > 150 && timeDiff < 300) {
             console.log("双击Ctrl："+timeDiff)
-            if(container.style.display=="block"){
-                container.style.display = "none";
-            } else {
-                container.style.display = "block";
-            }
+            setDrawerOpen(!drawerOpen);
 
             lastKeyPressTime = currentTime + 300;//屏蔽过快点击造成双闪
         } else {
@@ -508,7 +835,147 @@ function cloneRealPhoto(value) {
         }).filter(Boolean)));
     }
 
+    function chunkArray(list, size) {
+        const chunks = [];
+        for (let i = 0; i < list.length; i += size) {
+            chunks.push(list.slice(i, i + size));
+        }
+        return chunks;
+    }
+
+    function sleep(ms) {
+        return new Promise(function(resolve) {
+            setTimeout(resolve, ms);
+        });
+    }
+
+    async function queryRealPictureList(body) {
+        const data = await postTemu("https://agentseller.temu.com/api/flash/real_picture/list", body);
+        if (!data.success) {
+            throw new Error(data.error_msg || "查询实拍图商品列表失败");
+        }
+        return {
+            total: (data.result && data.result.total) || 0,
+            items: (data.result && data.result.items) || []
+        };
+    }
+
+    async function collectRealPictureProducts(baseBody, directSpuIds, skcIdArr) {
+        const productMap = new Map();
+        if (directSpuIds.length > 0) {
+            const chunks = chunkArray(directSpuIds, REAL_PHOTO_SPU_QUERY_BATCH_SIZE);
+            for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+                const chunk = chunks[chunkIndex];
+                let currentPage = 1;
+                let chunkTotal = chunk.length;
+                while ((currentPage - 1) * page_size < chunkTotal) {
+                    const body = Object.assign({}, baseBody, {
+                        page: currentPage,
+                        page_size,
+                        spu_id_list: chunk
+                    });
+                    const result = await queryRealPictureList(body);
+                    chunkTotal = result.total || result.items.length;
+                    result.items.forEach(function(product) {
+                        productMap.set(String(product.spu_id), product);
+                    });
+                    infoDiv.textContent = "SPU分批查询：" + (chunkIndex + 1) + "/" + chunks.length + "批，已找到" + productMap.size + "个商品";
+                    if (!result.items.length) break;
+                    currentPage++;
+                }
+            }
+            return Array.from(productMap.values());
+        }
+
+        page_num = 1;
+        total = 100;
+        while (total > (page_num - 1) * page_size && (page_num - 1) * page_size < TOPCOUNT) {
+            const body = Object.assign({}, baseBody, {
+                page: page_num,
+                page_size
+            });
+            if (skcIdArr.length > 0) {
+                body.skc_id_list = skcIdArr;
+            } else {
+                body.check_type_status_list = [Number(selectStatus.value)];
+            }
+            const result = await queryRealPictureList(body);
+            result.items.forEach(function(product) {
+                productMap.set(String(product.spu_id), product);
+            });
+            total = result.total;
+            page_num++;
+            infoDiv.textContent = "进度：总共" + total + "个，已扫描" + productMap.size + "个";
+            if (!result.items.length) break;
+        }
+        return Array.from(productMap.values());
+    }
+
+    async function submitRealPictureProduct(product, photoGroups, productTotal) {
+        if (!product.can_edit) {
+            console.log("SPU‘" + product.spu_id + "’无法编辑");
+            return;
+        }
+        if (!product.sku_info || !product.sku_info.length) {
+            console.log("SPU‘" + product.spu_id + "’商品异常或已被删除");
+            return;
+        }
+        const pageQueryData = await postTemu("https://agentseller.temu.com/ms/bg-flux-ms/compliance_property/page_query", {
+            page_num: 1,
+            page_size,
+            type: 2,
+            spu_id_list: [product.spu_id]
+        });
+        if (!pageQueryData.success) {
+            console.log(pageQueryData.error_msg);
+            return;
+        }
+        const pageQueryList = pageQueryData.result && pageQueryData.result.data ? pageQueryData.result.data : [];
+        if (pageQueryList.length < 1) {
+            console.log("没有找到SPU‘" + product.spu_id + "’的合规信息");
+            return;
+        }
+        if (!checkComplianceStatus(pageQueryList[0].wait_task_show_dtolist || [])) {
+            console.log("SPU‘" + product.spu_id + "’的合规操作未完成");
+            return;
+        }
+
+        const preVerificationBody = buildRealPictureBody(product, photoGroups);
+        console.log("进度：总共" + productTotal + "个，已提交" + submitCount + "个，成功" + successCount + "个，正在提交SPU：" + product.spu_id);
+        infoDiv.textContent = "进度：总共" + productTotal + "个，已提交" + submitCount + "个，成功" + successCount + "个，正在提交SPU：" + product.spu_id;
+        submitCount++;
+
+        let redata = await postTemu("https://agentseller.temu.com/api/flash/real_picture/pre_verification", preVerificationBody);
+        if (redata.success && redata.result && redata.result.check_result) {
+            successCount++;
+        } else {
+            preVerificationBody.confirm_type = 4;
+            redata = await postTemu("https://agentseller.temu.com/api/flash/real_picture/upload_new", preVerificationBody);
+            if (redata.success) {
+                successCount++;
+            } else {
+                let failInfo = product.spu_id + "失败情况：";
+                if (!redata.result || !redata.result.rule_check_result) {
+                    failInfo += redata.error_msg;
+                } else {
+                    redata.result.rule_check_result.forEach(function(item) {
+                        failInfo += item.rule_name + "->" + item.rule_status_toast + "<br>";
+                    });
+                }
+                console.log(failInfo);
+            }
+        }
+
+        console.log("进度：总共" + productTotal + "个，已提交" + submitCount + "个，成功" + successCount + "个");
+        infoDiv.textContent = "进度：总共" + productTotal + "个，已提交" + submitCount + "个，成功" + successCount + "个";
+    }
+
     async function mainFun(spu_id_list, options){
+        const photoGroups = options && options.photoGroups ? options.photoGroups : await ensurePhotoSourceReady();
+        if (!photoGroups || photoGroups.length === 0) {
+            infoDiv.textContent = "没有可提交的实拍图";
+            return;
+        }
         const ignorePanelInputs = !!(options && options.ignorePanelInputs);
         let skcIdArr = [];
         let spuIdArr = [];
@@ -525,164 +992,37 @@ function cloneRealPhoto(value) {
             spu_id_list = parseIdList(spu_id_list.join("\n"));
         }
 
-        if(!label_image_list || label_image_list.length === 0){
-            infoDiv.textContent = "第1步：请先填写图片来源模板SPU，并确认能读取到模板图片";
-            alert("请先填写图片来源模板SPU，并确认能读取到模板图片。");
-            return;
+        const directSpuIds = spu_id_list.length > 0 ? spu_id_list : (skcIdArr.length === 0 ? spuIdArr : []);
+        const baseBody = {
+            goods_status_list: [1, 2]
+        };
+        if (cateId && directSpuIds.length === 0) {
+            baseBody.cate_id_list = [cateId];
         }
 
-        page_num = 1;
-        total = 100;
         submitCount = 0;
         successCount = 0;
 		realPictureList= [];
-        //while(total>(page_num-1)*page_size){
-		while(total>(page_num-1)*page_size && (page_num-1)*page_size<TOPCOUNT){
-            //if((page_num-1)*page_size>300) break;
-            //console.log("开始：",total,page_num,page_size)
-            let realPictureListBody = {
-                page:page_num,
-                page_size,
-                goods_status_list: [1, 2]//商品状态：1在售、2未发布到站点
-                //cate_id_list:[31022]//商品分类
-            }
-            if(cateId){
-                realPictureListBody.cate_id_list=[cateId];
-            }
 
-            if(skcIdArr.length>0 || spuIdArr.length>0 || spu_id_list.length>0){
-                if(skcIdArr.length>0){
-                    realPictureListBody.skc_id_list=skcIdArr;
-                } else if(spuIdArr.length>0){
-                    realPictureListBody.spu_id_list = spuIdArr;
-                } else if(spu_id_list.length>0){
-                    realPictureListBody.spu_id_list = spu_id_list;
-                }
-            } else {
-                realPictureListBody.check_type_status_list=[Number(selectStatus.value)]//识别状态：1待传图、4图中标签有异常、5识别成功
-            }
+        try {
+            realPictureList = await collectRealPictureProducts(baseBody, directSpuIds, skcIdArr);
+        } catch (e) {
+            console.error(e);
+            infoDiv.textContent = e.message || "查询商品失败";
+            alert(e.message || "查询商品失败");
+            return;
+        }
 
-            let realPictureListData = await postTemu("https://agentseller.temu.com/api/flash/real_picture/list", realPictureListBody);
-            if(!realPictureListData.success){
-                console.log(realPictureListData.error_msg);
-                infoDiv.textContent = realPictureListData.error_msg;
-                return;
-            }
-            if(realPictureListData.result.total>0 && realPictureListData.result.items && realPictureListData.result.items.length>0){
-                // console.log(realPictureListData.result.items)
-                realPictureList.push(...realPictureListData.result.items);
-            }
+        if (!realPictureList.length) {
+            infoDiv.textContent = "没有找到可提交的商品";
+            alert("没有找到可提交的商品，请检查SPU或筛选状态");
+            return;
+        }
 
-            total = realPictureListData.result.total;
-            page_num++;
-
-            infoDiv.textContent = "进度：总共"+total+"个，已扫描"+realPictureList.length+"个";
-
-			if(realPictureList.length > 0 && (realPictureList.length>=total || (page_num-1)*page_size>=TOPCOUNT || total<=(page_num-1)*page_size)){//添加total<=(page_num-1)*page_size)，防止total与实际数量对不上
-                let timeIndex=0;
-                for(let indexProduct=0;indexProduct<realPictureList.length;indexProduct++){
-                    let product = realPictureList[indexProduct];
-                    // console.log(product)
-                    if (!product.can_edit) {
-                        console.log((indexProduct+1)+"，SPU‘" + product.spu_id + "’无法编辑");
-                        continue;
-                    }
-                    if(!product.sku_info){
-                        console.log((indexProduct+1)+"，SPU‘" + product.spu_id + "’商品异常或已被删除");
-                        continue;
-                    }
-                    timeIndex++;
-
-                    setTimeout(async function() {
-                        let pageQueryData = await postTemu("https://agentseller.temu.com/ms/bg-flux-ms/compliance_property/page_query", {
-                            page_num,
-                            page_size,
-                            type:2,
-                            spu_id_list:[product.spu_id]
-                        });
-                        if(!pageQueryData.success){
-                            console.log(pageQueryData.error_msg);
-                            return;
-                        }
-                        if(pageQueryData.result.data.length<1){
-                            console.log("没有找到SPU‘"+product.spu_id+"’的合规信息");
-                            return;
-                        }
-                        if(!checkComplianceStatus(pageQueryData.result.data[0].wait_task_show_dtolist)){
-                            console.log("SPU‘"+product.spu_id+"’的合规操作未完成");
-                            return;
-                        }
-						
-                        let preVerificationBody = {
-                            spu_id:product.spu_id,
-                            goods_id:product.goods_id,
-                            real_picture_info_list:[
-                                {
-                                    "position":1,
-                                    "is_same_sku":1,
-                                    "sku_photo_info_list":[]
-                                },
-                                {
-                                    "position":2,
-                                    "is_same_sku":1,
-                                    "sku_photo_info_list":[]
-                                }
-                            ]
-                        };
-
-                        for(let indexSKU=0;indexSKU<product.sku_info.length;indexSKU++){
-                            let sku = product.sku_info[indexSKU];
-                            
-                            let image_list1=[],image_list2=[];
-                            label_image_list.forEach((label_image)=>{
-                                if(label_image.position==1){
-                                    image_list1.push({image_url:label_image.image});
-                                } else if(label_image.position==2){
-                                    image_list2.push({image_url:label_image.image});
-                                }
-                            })
-                            preVerificationBody.real_picture_info_list[0].sku_photo_info_list.push({
-                                sku_id:sku.sku_id,
-                                image_list:image_list1
-                            });
-                            preVerificationBody.real_picture_info_list[1].sku_photo_info_list.push({
-                                sku_id:sku.sku_id,
-                                image_list:image_list2
-                            })
-                        }
-
-                        console.log("进度：总共"+total+"个，已提交"+(submitCount)+"个，成功"+successCount+"个，正在提交SPU：："+product.spu_id);
-                        infoDiv.textContent = "进度：总共"+total+"个，已提交"+(submitCount)+"个，成功"+successCount+"个，正在提交SPU："+product.spu_id;
-                        submitCount++;
-
-                        let redata = await postTemu("https://agentseller.temu.com/api/flash/real_picture/pre_verification", preVerificationBody);
-
-                        // 处理获取到的数据
-                        if(redata.success && redata.result.check_result) {
-                            successCount++;
-                        } else {
-                            preVerificationBody.confirm_type = 4;
-                            redata = await postTemu("https://agentseller.temu.com/api/flash/real_picture/upload_new", preVerificationBody);
-                            if(redata.success) {
-                                successCount++;
-                            } else {
-                                let failInfo = product.spu_id + "失败情况：";
-
-                                if (!redata.result || !redata.result.rule_check_result) {
-                                    failInfo += redata.error_msg;
-                                } else {
-                                    redata.result.rule_check_result.forEach((item) => {
-                                        failInfo += item.rule_name + "->" + item.rule_status_toast + "<br>";
-                                    })
-                                }
-                                console.log(failInfo);
-                            }
-                        }
-
-                        console.log("进度：总共"+total+"个，已提交"+(submitCount)+"个，成功"+successCount+"个");
-                        infoDiv.textContent = "进度：总共"+total+"个，已提交"+(submitCount)+"个，成功"+successCount+"个";
-                    }, 1000*2.5*timeIndex);//接口限制，不能太快提交；限制每2秒提交1个。
-                }
+        for (let indexProduct = 0; indexProduct < realPictureList.length; indexProduct++) {
+            await submitRealPictureProduct(realPictureList[indexProduct], photoGroups, realPictureList.length);
+            if (indexProduct < realPictureList.length - 1) {
+                await sleep(2500);
             }
         }
     }
