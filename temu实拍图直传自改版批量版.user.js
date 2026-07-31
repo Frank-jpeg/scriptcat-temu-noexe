@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEMU实拍图直传-自改版批量版
 // @namespace    https://github.com/Frank-jpeg/scriptcat-temu-noexe
-// @version      1.1.0
+// @version      1.2.0
 // @description  按指定 SPU 清单批量套用实拍图标签图。直接调 TEMU 接口，图片只上传一次，一次提交 50 个 SPU，无需逐个处理。
 // @match        https://agentseller.temu.com/*
 // @run-at       document-idle
@@ -325,7 +325,14 @@
   #jtA .log div{color:#8794ad;word-break:break-all}
   #jtA .log div.ok{color:#86efac} #jtA .log div.warn{color:#fcd34d} #jtA .log div.err{color:#fca5a5}
   #jtA .log::-webkit-scrollbar{width:6px}
-  #jtA .log::-webkit-scrollbar-thumb{background:#36425c;border-radius:3px}`;
+  #jtA .log::-webkit-scrollbar-thumb{background:#36425c;border-radius:3px}
+  #jtA .redo{margin-top:11px;padding-top:10px;border-top:1px solid #24304a}
+  #jtA .redo .hd{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+  #jtA .redo .hd span{flex:1;color:#fcd34d;font-size:12px}
+  #jtA .redo button{flex:none;width:auto;padding:5px 11px;font-size:11.5px;
+    font-weight:500;background:#2a3346;color:#a5b3cc}
+  #jtA .redo button:hover{background:#38445f;color:#fff}
+  #jtA .redo textarea{height:78px;color:#c9d4e6}`;
 
   const style = document.createElement('style');
   style.textContent = css;
@@ -346,12 +353,51 @@
         <button id="a-go">开始提交</button>
       </div>
       <div class="log" id="a-log"></div>
+      <div class="redo" id="a-redo" hidden>
+        <div class="hd"><span id="a-redo-n"></span><button id="a-redo-copy">复制</button></div>
+        <textarea id="a-redo-ta" readonly spellcheck="false"></textarea>
+      </div>
     </div>`;
   document.body.appendChild(root);
 
   const $ = (s) => root.querySelector(s);
   const elSpu = $('#a-spu'), elImg1 = $('#a-img1'), elImg2 = $('#a-img2');
   const elStat = $('#a-stat'), elLog = $('#a-log'), elDry = $('#a-dry'), elGo = $('#a-go');
+  const elRedo = $('#a-redo'), elRedoN = $('#a-redo-n'),
+        elRedoTa = $('#a-redo-ta'), elRedoCopy = $('#a-redo-copy');
+
+  /**
+   * 把有问题的 SPU 汇总成一份可复制的清单。
+   * 分组标题写成 # 开头的注释行——parseSpu 只认纯数字，
+   * 所以整段原样粘回输入框也不会出错，注释会被自动忽略。
+   */
+  function showRedo(groups) {
+    const lines = [];
+    let rerun = 0;
+    for (const g of groups) {
+      if (!g.spus.length) continue;
+      if (g.rerunnable) rerun += g.spus.length;
+      lines.push(`# ${g.title}（${g.spus.length} 个）`, ...g.spus, '');
+    }
+    if (!lines.length) { elRedo.hidden = true; return; }
+    elRedoTa.value = lines.join('\n').trim();
+    const total = groups.reduce((n, g) => n + g.spus.length, 0);
+    elRedoN.textContent = rerun
+      ? `${total} 个有问题，其中 ${rerun} 个建议重跑`
+      : `${total} 个有问题`;
+    elRedo.hidden = false;
+  }
+
+  elRedoCopy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(elRedoTa.value);
+    } catch {
+      elRedoTa.select();
+      document.execCommand('copy');
+    }
+    elRedoCopy.textContent = '已复制';
+    setTimeout(() => { elRedoCopy.textContent = '复制'; }, 1400);
+  });
 
   let lastLine = null;
   function log(msg, replace = false, cls = '') {
@@ -409,6 +455,7 @@
     root.classList.add('busy');   // 收起状态下竖条会呼吸闪烁，表示还在跑
     try {
       const spus = parseSpu(elSpu.value).spus;
+      elRedo.hidden = true;   // 每次跑之前先清掉上一轮的问题清单
       log(`===== ${dryRun ? '试运行' : '正式提交'} 开始（${spus.length} 个 SPU）=====`, false, 'ok');
 
       // 1. 上传图片（每张只传一次）
@@ -453,18 +500,31 @@
         }
         log('第 1 个批次的请求体预览：');
         log(JSON.stringify(tasks[0], null, 1));
+        showRedo([
+          { title: '没查到类目（建议重跑）', spus: noCate.map(String), rerunnable: true },
+          { title: '未命中：不在实拍图待办里，重跑也不会成功', spus: missing, rerunnable: false },
+        ]);
         return;
       }
 
       // 5. 提交
       let ok = 0, fail = 0;
+      const failedSpus = [];
       const res = await pool(tasks, (t) => callApi(API.submit, t),
         (d, t) => log(`  提交进度 ${d}/${t}`, true));
       res.forEach((r, i) => {
-        if (r?.__error) { fail++; log(`批次 ${i + 1} 失败：${r.__error}`, false, 'err'); }
-        else ok += tasks[i].spu_ids.length;
+        if (r?.__error) {
+          fail++;
+          failedSpus.push(...tasks[i].spu_ids.map(String));
+          log(`批次 ${i + 1} 失败：${r.__error}`, false, 'err');
+        } else ok += tasks[i].spu_ids.length;
       });
       log(`===== 完成：成功 ${ok} 个商品，失败批次 ${fail} 个 =====`, false, fail ? 'warn' : 'ok');
+      showRedo([
+        { title: '提交失败（建议重跑）', spus: failedSpus, rerunnable: true },
+        { title: '没查到类目（建议重跑）', spus: noCate.map(String), rerunnable: true },
+        { title: '未命中：不在实拍图待办里，重跑也不会成功', spus: missing, rerunnable: false },
+      ]);
     } catch (e) {
       log('中止：' + (e.message || e), false, 'err');
     } finally {
@@ -491,6 +551,6 @@
   setInterval(apply, 900);
   apply();
 
-  log('脚本已就绪 v1.1.0');
+  log('脚本已就绪 v1.2.0');
   refresh();
 })();
