@@ -214,7 +214,13 @@ POST /ms/bg-flux-ms/compliance_property/page_query
 
 TEMU 页面自己发请求时带 `anti-content`（反爬 token，由它的 JS 生成）。**但接口不强制要求** —— 本脚本和佳同插件都不发，一样能通。
 
-如果哪天开始 403 且 `Mallid` 没问题，优先怀疑 TEMU 加严了这个校验。届时脚本方案基本走不通，只能回到「用插件 + 分批喂 SPU」的老路。
+如果哪天开始 403 且 `Mallid` 没问题，优先怀疑 TEMU 加严了这个校验。届时本脚本这条路基本走不通。
+
+**退路是现成的**：另有一个「借佳同插件的口」的脚本——不自己发请求，而是把 SPU 清单写进插件读取的 `localStorage["temu_compliance_liveImg_requestBody"]` 的 `spu_id_list` 字段，再触发插件自己的按钮（`#jtyt-cj-realPhoto-btn1`），由插件完成上传。因为请求是插件发的，不受这里的限制。
+
+代价：`spu_id_list` 一长服务端就不响应（50 可以、1161 会挂），所以只能分批；而且每批都要在插件弹窗里重新传一次图。
+
+该脚本**未纳入本仓库**，在维护者本地：`E:\claude项目\temu-实拍图-指定SPU.user.js`。
 
 ---
 
@@ -263,7 +269,18 @@ TEMU 页面自己发请求时带 `anti-content`（反爬 token，由它的 JS �
 ## 资料来源
 
 1. **真实抓包** —— `list` / `batch_upload` / `store_image` 的完整请求，确定了字段名和 `position` 语义
-2. **佳同跨境-TEMU店铺助手（v3.8.1）逆向** —— 插件的 `main.js` 混淆后解出，`batch_upload` 的分批策略、限流退避参数来自这里
+2. **佳同跨境-TEMU店铺助手（v3.8.1）逆向** —— 插件的 `main.js` 混淆后解出，`batch_upload` 的分批策略、限流退避参数来自这里。
+
+   解混淆产物已删除。要重来的话方法很简单（插件用 javascript-obfuscator 混淆，三步就能读）：
+
+   1. `\uXXXX` / `\xXX` 转义还原成明文 —— **中文字符串是明文的**，还原后直接能搜到功能名
+   2. `"abc".split("").reverse().join("")` 这类反转字符串还原
+   3. `0xAAAA^0xBBBB` 常量异或折叠成十进制
+
+   做完这三步，接口地址、请求体字段、中文提示语全部可读；变量名仍是 `_0x1a2b3c` 那种（混淆时已丢弃，恢复不了），但不影响读逻辑。
+
+   插件目录：`C:\Users\Lan\Downloads\佳同temu插件381-0725-2-无需解压直接拖入\`，
+   主要看 `main.js`（3.4MB）、`temu.js`、`background.js`。
 3. **`合规中心-实拍图-自改版.user.js`** —— 同仓库，`searchForChainSupplier` 和 signature 两个接口是从它这里确认的
 
 ---
