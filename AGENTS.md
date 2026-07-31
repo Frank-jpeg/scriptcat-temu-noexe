@@ -2,7 +2,14 @@
 
 - 始终使用简体中文回复，保持简洁。
 - 当前目录是独立 Git 仓库：`Frank-jpeg/scriptcat-temu-noexe`。
-- 远程仓库使用 SSH：`git@github.com:Frank-jpeg/scriptcat-temu-noexe.git`。这台机器的 GitHub SSH 已验证可用；HTTPS 可能超时。
+- 远程仓库推送方式**因机器而异**，先确认自己在哪台：
+  - **macOS 维护机**（本地目录 `/Users/mini/Desktop/codex项目/TEMU 脚本`）：用 SSH `git@github.com:Frank-jpeg/scriptcat-temu-noexe.git`，已验证可用；HTTPS 可能超时。
+  - **Windows 机**：SSH 密钥未配置，会 `Permission denied (publickey)`。改用 HTTPS + gh 令牌，并挂代理：
+    ```bash
+    export HTTPS_PROXY=http://127.0.0.1:7897 HTTP_PROXY=http://127.0.0.1:7897
+    git remote set-url origin https://github.com/Frank-jpeg/scriptcat-temu-noexe.git
+    git -c credential.helper='!gh auth git-credential' push origin main
+    ```
 
 ## 发布规则
 
