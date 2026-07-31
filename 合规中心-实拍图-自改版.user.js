@@ -11,12 +11,13 @@
 // @run-at       document-idle
 // @downloadURL  https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/%E5%90%88%E8%A7%84%E4%B8%AD%E5%BF%83-%E5%AE%9E%E6%8B%8D%E5%9B%BE-%E8%87%AA%E6%94%B9%E7%89%88.user.js
 // @updateURL    https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/%E5%90%88%E8%A7%84%E4%B8%AD%E5%BF%83-%E5%AE%9E%E6%8B%8D%E5%9B%BE-%E8%87%AA%E6%94%B9%E7%89%88.user.js
-// @version      2026.0730.6
+// @version      2026.0731.1
 // ==/UserScript==
 
 const REAL_PHOTO_CONFIG_KEY = "goldabcd_noexe_real_photo_config_v1";
 const REAL_PHOTO_SPU_INPUT_KEY = "goldabcd_noexe_real_photo_spu_input_v1";
 const REAL_PHOTO_SOURCE_MODE_KEY = "goldabcd_noexe_real_photo_source_mode_v1";
+const REAL_PHOTO_ACTIVE_TEMPLATE_KEY = "goldabcd_noexe_real_photo_active_template_v1";
 const REAL_PHOTO_MAX_IMAGE_SIZE = 3 * 1024 * 1024;
 const REAL_PHOTO_SPU_QUERY_BATCH_SIZE = 50;
 const REAL_PHOTO_DEFAULT_CONFIG = {
@@ -103,10 +104,14 @@ function normalizeTemplateSpuMap(value) {
     Object.keys(map).forEach(function(name) {
         if (name === "version" || name === "templateSpuMap") return;
         const spuId = String(map[name] == null ? "" : map[name]).trim();
-        normalized[String(name).trim() || "全部分类"] = spuId;
+        normalized[normalizeTemplateName(name)] = spuId;
     });
     if (!Object.prototype.hasOwnProperty.call(normalized, "全部分类")) normalized["全部分类"] = "";
     return normalized;
+}
+
+function normalizeTemplateName(name) {
+    return String(name == null ? "" : name).trim() || "全部分类";
 }
 
 function hasTemplateSpu(templateSpuMap) {
@@ -132,6 +137,16 @@ function jsonToMap(value) {
         if (spuId) map.set(name, spuId);
     });
     return map;
+}
+
+function templateMapToObject(map) {
+    const objectValue = {};
+    if (map && typeof map.forEach === "function") {
+        map.forEach(function(spuId, name) {
+            objectValue[normalizeTemplateName(name)] = String(spuId || "").trim();
+        });
+    }
+    return normalizeTemplateSpuMap(objectValue);
 }
 
 async function postTemu(url, data) {
@@ -194,7 +209,7 @@ async function uploadTemuImage(file) {
 
 function registerRealPhotoConfigMenu() {
     if (typeof GM_registerMenuCommand !== "function") return;
-    GM_registerMenuCommand("实拍图自改版：设置图片来源SPU", async function() {
+    GM_registerMenuCommand("实拍图自改版：新增/修改模板SPU", async function() {
         await openRealPhotoConfigPrompt();
     });
     GM_registerMenuCommand("实拍图自改版：导出模板SPU配置", async function() {
@@ -211,7 +226,14 @@ function registerRealPhotoConfigMenu() {
 
 async function openRealPhotoConfigPrompt() {
     const config = await loadRealPhotoConfig();
-    const currentSpu = getFirstTemplateSpu(config.templateSpuMap);
+    const templateSpuMap = normalizeTemplateSpuMap(config.templateSpuMap);
+    const currentName = Object.keys(templateSpuMap).find(function(name) {
+        return String(templateSpuMap[name] || "").trim();
+    }) || "全部分类";
+    const nextName = prompt("请输入模板名称，用来区分不同图片模板。", currentName);
+    if (nextName == null) return;
+    const templateName = normalizeTemplateName(nextName);
+    const currentSpu = String(templateSpuMap[templateName] || getFirstTemplateSpu(templateSpuMap) || "").trim();
     const nextSpu = prompt("请输入图片来源模板SPU，只填SPU数字。脚本会复制这个SPU已有的实拍图。", currentSpu);
     if (nextSpu == null) return;
     const spuId = String(nextSpu || "").trim();
@@ -219,8 +241,14 @@ async function openRealPhotoConfigPrompt() {
         alert("没有填写模板SPU");
         return;
     }
-    await saveRealPhotoConfig({ templateSpuMap: { "全部分类": spuId } });
-    alert("已保存，刷新页面后生效");
+    templateSpuMap[templateName] = spuId;
+    await saveRealPhotoConfig({ templateSpuMap });
+    try {
+        localStorage.setItem(REAL_PHOTO_ACTIVE_TEMPLATE_KEY, templateName);
+    } catch (e) {
+        console.log("保存当前模板名称失败", e);
+    }
+    alert("已保存模板：" + templateName + "，刷新页面后生效");
 }
 
 function showRealPhotoSetupTip(message) {
@@ -293,9 +321,28 @@ function cloneRealPhoto(value) {
     function templateOptionLabel(catName, spuId) {
         return catName + "-->模板SPU：" + (String(spuId || "").trim() || "未配置");
     }
-    for (const [cat_name, spu_id] of cat_spu_map) {
-        selectSPUModel.appendChild(new Option(templateOptionLabel(cat_name, spu_id), cat_name));
+
+    async function saveTemplateMapFromPanel() {
+        await saveRealPhotoConfig({ templateSpuMap: templateMapToObject(cat_spu_map) });
     }
+
+    function refreshTemplateSelect(preferredName) {
+        const targetName = normalizeTemplateName(preferredName || selectSPUModel.value || localStorage.getItem(REAL_PHOTO_ACTIVE_TEMPLATE_KEY) || defaultName);
+        selectSPUModel.innerHTML = "";
+        if (!cat_spu_map.size) cat_spu_map.set(defaultName, "");
+        for (const [cat_name, spu_id] of cat_spu_map) {
+            selectSPUModel.appendChild(new Option(templateOptionLabel(cat_name, spu_id), cat_name));
+        }
+        if (cat_spu_map.has(targetName)) {
+            selectSPUModel.value = targetName;
+        } else if (cat_spu_map.has(defaultName)) {
+            selectSPUModel.value = defaultName;
+        } else {
+            selectSPUModel.value = Array.from(cat_spu_map.keys())[0] || defaultName;
+        }
+        localStorage.setItem(REAL_PHOTO_ACTIVE_TEMPLATE_KEY, selectSPUModel.value);
+    }
+    refreshTemplateSelect();
 
     // 创建容器
     let container = document.createElement("div");
@@ -360,36 +407,84 @@ function cloneRealPhoto(value) {
     container.appendChild(sourceModeDiv);
 
     const divTemplateInput = document.createElement("div");
-    divTemplateInput.style = "width:100%;margin:5px;";
+    divTemplateInput.style = "width:100%;margin:5px;background:#fff;border:1px solid #ddd;border-radius:6px;padding:6px;box-sizing:border-box;";
+    const templateHelp = document.createElement("div");
+    templateHelp.textContent = "模板模式：可保存多个模板，命名后下次直接下拉选择。";
+    templateHelp.style = "font-size:12px;color:#333;margin-bottom:6px;";
+    const templateSelectLabel = document.createElement("div");
+    templateSelectLabel.textContent = "已保存模板：";
+    templateSelectLabel.style = "margin-bottom:4px;font-weight:bold;";
+    const templateSelectRow = document.createElement("div");
+    templateSelectRow.style = "display:flex;align-items:center;gap:6px;margin-bottom:6px;";
+    selectSPUModel.style = "height:30px;flex:1;min-width:0;box-sizing:border-box;border:1px solid #999;border-radius:6px;padding:0 6px;";
+    const deleteTemplateButton = document.createElement("button");
+    deleteTemplateButton.textContent = "删除";
+    deleteTemplateButton.style = "height:30px;background:#666;color:#fff;border:0;border-radius:6px;padding:0 10px;cursor:pointer;";
+    templateSelectRow.appendChild(selectSPUModel);
+    templateSelectRow.appendChild(deleteTemplateButton);
+    const templateNameLabel = document.createElement("div");
+    templateNameLabel.textContent = "模板名称：";
+    templateNameLabel.style = "margin-bottom:4px;font-weight:bold;";
+    const templateNameInput = document.createElement("input");
+    templateNameInput.placeholder = "例如：女装标签图、包装图A款";
+    templateNameInput.value = selectSPUModel.value || defaultName;
+    templateNameInput.style = "width:430px;height:30px;box-sizing:border-box;margin-bottom:6px;padding:5px 8px;border:1px solid #999;border-radius:6px;";
     const templateSpuLabel = document.createElement("div");
     templateSpuLabel.textContent = "图片来源模板SPU（复制这个SPU的实拍图）：";
     templateSpuLabel.style = "margin-bottom:4px;font-weight:bold;";
+    const templateSpuRow = document.createElement("div");
+    templateSpuRow.style = "display:flex;align-items:center;gap:6px;";
     const templateSpuInput = document.createElement("input");
     templateSpuInput.placeholder = "只填一个SPU数字，例如 123456789";
-    templateSpuInput.value = cat_spu_map.get(defaultName) || getFirstTemplateSpu(getConfigData.data);
-    templateSpuInput.style = "width:310px;height:30px;box-sizing:border-box;padding:5px 8px;border:1px solid #999;border-radius:6px;";
+    templateSpuInput.value = cat_spu_map.get(selectSPUModel.value) || getFirstTemplateSpu(getConfigData.data);
+    templateSpuInput.style = "height:30px;flex:1;min-width:0;box-sizing:border-box;padding:5px 8px;border:1px solid #999;border-radius:6px;";
     const saveTemplateButton = document.createElement("button");
-    saveTemplateButton.textContent = "保存";
-    saveTemplateButton.style = "margin-left:6px;height:30px;background:#1677ff;color:#fff;border:0;border-radius:6px;padding:0 12px;cursor:pointer;";
+    saveTemplateButton.textContent = "保存模板";
+    saveTemplateButton.style = "height:30px;background:#1677ff;color:#fff;border:0;border-radius:6px;padding:0 12px;cursor:pointer;";
+
+    function syncTemplateInputsFromSelection() {
+        const selectedName = normalizeTemplateName(selectSPUModel.value || defaultName);
+        templateNameInput.value = selectedName;
+        templateSpuInput.value = String(cat_spu_map.get(selectedName) || "").trim();
+        localStorage.setItem(REAL_PHOTO_ACTIVE_TEMPLATE_KEY, selectedName);
+    }
+
     saveTemplateButton.onclick = async function() {
+        const templateName = normalizeTemplateName(templateNameInput.value || selectSPUModel.value || defaultName);
         const templateSpu = String(templateSpuInput.value || "").trim();
         if (!templateSpu) {
             alert("请先填写图片来源模板SPU");
             return;
         }
-        await saveRealPhotoConfig({ templateSpuMap: { "全部分类": templateSpu } });
-        cat_spu_map.set(defaultName, templateSpu);
-        const option = Array.from(selectSPUModel.options).find(function(item) {
-            return item.value === defaultName;
-        });
-        if (option) option.textContent = templateOptionLabel(defaultName, templateSpu);
-        selectSPUModel.value = defaultName;
-        infoDiv.textContent = "模板SPU已保存，正在读取模板图片...";
+        cat_spu_map.set(templateName, templateSpu);
+        await saveTemplateMapFromPanel();
+        refreshTemplateSelect(templateName);
+        syncTemplateInputsFromSelection();
+        infoDiv.textContent = "模板已保存：" + templateName + "，正在读取模板图片...";
         await updateSpu();
     };
+    deleteTemplateButton.onclick = async function() {
+        const templateName = normalizeTemplateName(selectSPUModel.value || templateNameInput.value || defaultName);
+        if (!cat_spu_map.has(templateName)) return;
+        if (!confirm("确认删除模板：" + templateName + "？")) return;
+        cat_spu_map.delete(templateName);
+        if (!cat_spu_map.size) cat_spu_map.set(defaultName, "");
+        const nextName = cat_spu_map.has(defaultName) ? defaultName : Array.from(cat_spu_map.keys())[0];
+        await saveTemplateMapFromPanel();
+        refreshTemplateSelect(nextName);
+        syncTemplateInputsFromSelection();
+        infoDiv.textContent = "模板已删除：" + templateName;
+        await updateSpu();
+    };
+    divTemplateInput.appendChild(templateHelp);
+    divTemplateInput.appendChild(templateSelectLabel);
+    divTemplateInput.appendChild(templateSelectRow);
+    divTemplateInput.appendChild(templateNameLabel);
+    divTemplateInput.appendChild(templateNameInput);
     divTemplateInput.appendChild(templateSpuLabel);
-    divTemplateInput.appendChild(templateSpuInput);
-    divTemplateInput.appendChild(saveTemplateButton);
+    templateSpuRow.appendChild(templateSpuInput);
+    templateSpuRow.appendChild(saveTemplateButton);
+    divTemplateInput.appendChild(templateSpuRow);
     container.appendChild(divTemplateInput);
 
     const divUploadInput = document.createElement("div");
@@ -457,14 +552,6 @@ function cloneRealPhoto(value) {
     templateModeRadio.onchange = function() { setSourceMode("template"); };
     uploadModeRadio.onchange = function() { setSourceMode("upload"); };
     setSourceMode(sourceMode);
-
-    const divSelect = document.createElement("div");
-    divSelect.style="width:100%;display:none;margin: 5px;";
-    const pTip = document.createElement("div");
-    pTip.textContent="产品类型：";
-    divSelect.appendChild(pTip);
-    divSelect.appendChild(selectSPUModel);
-    container.appendChild(divSelect);
 
     const statusDiv = document.createElement("div");
     statusDiv.style="width:100%;display: ruby;margin: 5px;";
@@ -629,24 +716,26 @@ function cloneRealPhoto(value) {
 
     let label_image_list = [];
 
-    selectSPUModel.onchange=updateSpu;
+    selectSPUModel.onchange = async function(){
+        syncTemplateInputsFromSelection();
+        await updateSpu();
+    };
+    syncTemplateInputsFromSelection();
     selectSPUModel.dispatchEvent(new Event('change', { bubbles: true }));
 
     async function ensureTemplateReady(){
+        const templateName = normalizeTemplateName(templateNameInput.value || selectSPUModel.value || defaultName);
         const templateSpu = String(templateSpuInput.value || "").trim();
         if(!templateSpu){
             infoDiv.textContent = "第1步：请先填写图片来源模板SPU";
             alert("请先填写图片来源模板SPU。这个SPU必须已经有实拍图。");
             return false;
         }
-        if(String(cat_spu_map.get(defaultName) || "").trim() !== templateSpu || !label_image_list || label_image_list.length === 0){
-            await saveRealPhotoConfig({ templateSpuMap: { "全部分类": templateSpu } });
-            cat_spu_map.set(defaultName, templateSpu);
-            const option = Array.from(selectSPUModel.options).find(function(item) {
-                return item.value === defaultName;
-            });
-            if (option) option.textContent = templateOptionLabel(defaultName, templateSpu);
-            selectSPUModel.value = defaultName;
+        if(selectSPUModel.value !== templateName || String(cat_spu_map.get(templateName) || "").trim() !== templateSpu || !label_image_list || label_image_list.length === 0){
+            cat_spu_map.set(templateName, templateSpu);
+            await saveTemplateMapFromPanel();
+            refreshTemplateSelect(templateName);
+            syncTemplateInputsFromSelection();
             await updateSpu();
         }
         if(!label_image_list || label_image_list.length === 0){
@@ -658,7 +747,8 @@ function cloneRealPhoto(value) {
     }
 
     async function updateSpu(){
-        let spuId = String(cat_spu_map.get(selectSPUModel.value) || "").trim();
+        const selectedTemplateName = normalizeTemplateName(selectSPUModel.value || defaultName);
+        let spuId = String(cat_spu_map.get(selectedTemplateName) || "").trim();
         templateSpuInput.value = spuId;
         if(!spuId){
             label_image_list = [];
@@ -682,13 +772,7 @@ function cloneRealPhoto(value) {
         infoDiv.textContent = "模板图片已读取：主体图" + position1Count + "张，外包装图" + position2Count + "张";
         //inputZhuTi.value=listData.result.items[0].label_image_list[0].image;
         //inputWaiBaoZhuang.value=listData.result.items[0].label_image_list[1].image;
-
-        if (defaultName == selectSPUModel.value) {
-            cateId = null;
-        } else {
-            let searchForChainSupplierData = await postTemu("https://agentseller.temu.com/api/kiana/mms/robin/searchForChainSupplier", { pageNum: 1, pageSize: 50, supplierTodoTypeList: [], productSpuIdList: [spuId] });
-            cateId = searchForChainSupplierData.result.dataList[0].catIdList[0];
-        }
+        cateId = null;
     }
 
     function addImageToGroup(groupMap, position, imageItem) {
