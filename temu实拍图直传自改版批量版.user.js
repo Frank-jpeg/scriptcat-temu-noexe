@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEMU实拍图直传-自改版批量版
 // @namespace    https://github.com/Frank-jpeg/scriptcat-temu-noexe
-// @version      1.0.4
+// @version      1.1.0
 // @description  按指定 SPU 清单批量套用实拍图标签图。直接调 TEMU 接口，图片只上传一次，一次提交 50 个 SPU，无需逐个处理。
 // @match        https://agentseller.temu.com/*
 // @run-at       document-idle
@@ -280,14 +280,27 @@
   // ============================ UI ============================
 
   const css = `
-  #jtA{position:fixed;z-index:2147483000;top:80px;right:18px;width:360px;
+  #jtA{position:fixed;z-index:2147483000;top:80px;right:0;width:360px;
     font:13px/1.55 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;color:#e9edf4;
-    background:#161d2b;border:1px solid #2d3850;border-radius:11px;
-    box-shadow:0 14px 38px rgba(6,10,20,.5);overflow:hidden}
+    background:#161d2b;border:1px solid #2d3850;border-right:0;
+    border-radius:11px 0 0 11px;box-shadow:-6px 14px 38px rgba(6,10,20,.5);
+    transition:transform .26s cubic-bezier(.4,0,.2,1)}
+  #jtA.closed{transform:translateX(360px)}
   #jtA *{box-sizing:border-box}
-  #jtA header{display:flex;align-items:center;gap:8px;padding:11px 13px;cursor:move;
-    background:#1d2739;border-bottom:1px solid #2d3850;user-select:none}
+  #jtA .tab{position:absolute;left:-38px;top:0;width:38px;padding:14px 0 16px;
+    background:#1d2739;border:1px solid #2d3850;border-right:0;
+    border-radius:10px 0 0 10px;box-shadow:-5px 6px 18px rgba(6,10,20,.42);
+    color:#c3cede;font-size:12.5px;letter-spacing:3px;text-align:center;
+    writing-mode:vertical-rl;cursor:pointer;user-select:none;transition:.15s}
+  #jtA .tab:hover{background:#27334c;color:#fff}
+  #jtA.busy .tab{background:#1c3a2a;color:#86efac;animation:jtA-pulse 1.4s ease-in-out infinite}
+  @keyframes jtA-pulse{0%,100%{opacity:1}50%{opacity:.5}}
+  #jtA header{display:flex;align-items:center;gap:8px;padding:11px 13px;
+    background:#1d2739;border-bottom:1px solid #2d3850;user-select:none;
+    border-radius:10px 0 0 0}
   #jtA header b{flex:1;font-size:13px;letter-spacing:.2px}
+  #jtA header .x{cursor:pointer;color:#8d9bb5;font-size:18px;line-height:1;padding:0 1px}
+  #jtA header .x:hover{color:#fff}
   #jtA header .tag{font-size:10px;padding:2px 6px;border-radius:4px;background:#4a3a17;color:#f2c14e}
   #jtA .body{padding:13px;max-height:74vh;overflow:auto}
   #jtA textarea{width:100%;height:88px;resize:vertical;padding:8px;border-radius:6px;
@@ -321,7 +334,8 @@
   const root = document.createElement('div');
   root.id = 'jtA';
   root.innerHTML = `
-    <header><b>实拍图 · 批量直传</b><span class="tag">A 方案</span></header>
+    <div class="tab" id="a-tab" title="点击展开 / 收起（双击 Ctrl 也可以）">实拍图</div>
+    <header><b>实拍图 · 批量直传</b><span class="tag">A 方案</span><span class="x" id="a-x" title="收起">×</span></header>
     <div class="body">
       <textarea id="a-spu" spellcheck="false" placeholder="粘贴 SPU，换行/逗号/空格分隔"></textarea>
       <div class="row"><label class="k">主体标签图</label><input type="file" id="a-img1" accept="image/*" multiple></div>
@@ -350,21 +364,29 @@
     lastLine = replace ? d : null;
   }
 
-  (function drag() {
-    const h = root.querySelector('header');
-    let on = false, sx, sy, ox, oy;
-    h.addEventListener('mousedown', (e) => {
-      on = true; const r = root.getBoundingClientRect();
-      sx = e.clientX; sy = e.clientY; ox = r.left; oy = r.top;
-      root.style.right = 'auto'; e.preventDefault();
-    });
-    addEventListener('mousemove', (e) => {
-      if (!on) return;
-      root.style.left = Math.max(0, ox + e.clientX - sx) + 'px';
-      root.style.top = Math.max(0, oy + e.clientY - sy) + 'px';
-    });
-    addEventListener('mouseup', () => { on = false; });
-  })();
+  // -------------------- 抽屉开合 --------------------
+  // 面板贴着右边缘，收起时整体右移 360px 滑出屏幕，
+  // 只留下挂在它左侧的那个竖条（tab 是面板的子元素，会跟着一起动）。
+  const DRAWER_KEY = 'jtA_drawer_closed';
+  const isClosed = () => root.classList.contains('closed');
+  function setClosed(v) {
+    root.classList.toggle('closed', v);
+    try { localStorage.setItem(DRAWER_KEY, v ? '1' : '0'); } catch {}
+  }
+  $('#a-tab').addEventListener('click', () => setClosed(!isClosed()));
+  $('#a-x').addEventListener('click', () => setClosed(true));
+
+  // 双击 Ctrl 也能开合（跟仓库里另一个实拍图脚本的习惯保持一致）
+  let lastCtrl = 0;
+  addEventListener('keydown', (e) => {
+    if (e.key !== 'Control') { lastCtrl = 0; return; }
+    const now = Date.now(), gap = now - lastCtrl;
+    if (gap > 80 && gap < 400) { setClosed(!isClosed()); lastCtrl = 0; }
+    else lastCtrl = now;
+  });
+
+  // 没存过就默认收起——平时不占地方
+  setClosed(localStorage.getItem(DRAWER_KEY) !== '0');
 
   function refresh() {
     const { spus, bad } = parseSpu(elSpu.value);
@@ -384,6 +406,7 @@
 
   async function run(dryRun) {
     elGo.disabled = elDry.disabled = true;
+    root.classList.add('busy');   // 收起状态下竖条会呼吸闪烁，表示还在跑
     try {
       const spus = parseSpu(elSpu.value).spus;
       log(`===== ${dryRun ? '试运行' : '正式提交'} 开始（${spus.length} 个 SPU）=====`, false, 'ok');
@@ -445,6 +468,7 @@
     } catch (e) {
       log('中止：' + (e.message || e), false, 'err');
     } finally {
+      root.classList.remove('busy');
       refresh();
     }
   }
@@ -467,6 +491,6 @@
   setInterval(apply, 900);
   apply();
 
-  log('脚本已就绪 v1.0.4');
+  log('脚本已就绪 v1.1.0');
   refresh();
 })();
