@@ -16,6 +16,7 @@ TEMU ScriptCat 自改版脚本，去掉本地下载器依赖，并支持 GitHub 
 - Temu 销售管理备货计算: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/Temu%E9%94%80%E5%94%AE%E7%AE%A1%E7%90%86%E5%A4%87%E8%B4%A7%E8%AE%A1%E7%AE%97.user.js
 - 合规中心-实拍图-自改版: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/%E5%90%88%E8%A7%84%E4%B8%AD%E5%BF%83-%E5%AE%9E%E6%8B%8D%E5%9B%BE-%E8%87%AA%E6%94%B9%E7%89%88.user.js
 - TEMU实拍图直传-自改版批量版: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temu%E5%AE%9E%E6%8B%8D%E5%9B%BE%E7%9B%B4%E4%BC%A0%E8%87%AA%E6%94%B9%E7%89%88%E6%89%B9%E9%87%8F%E7%89%88.user.js
+  - 说明文档：[TEMU实拍图直传-自改版批量版-说明.md](TEMU%E5%AE%9E%E6%8B%8D%E5%9B%BE%E7%9B%B4%E4%BC%A0-%E8%87%AA%E6%94%B9%E7%89%88%E6%89%B9%E9%87%8F%E7%89%88-%E8%AF%B4%E6%98%8E.md)（与「合规中心-实拍图-自改版」的区别、接口协议、未验证项）
 
 以后修改脚本时提高 `@version` 并推送到 GitHub，ScriptCat 的“检查更新”即可更新。
 

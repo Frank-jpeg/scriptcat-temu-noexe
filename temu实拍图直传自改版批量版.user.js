@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEMU实拍图直传-自改版批量版
 // @namespace    https://github.com/Frank-jpeg/scriptcat-temu-noexe
-// @version      1.0.3
+// @version      1.0.4
 // @description  按指定 SPU 清单批量套用实拍图标签图。直接调 TEMU 接口，图片只上传一次，一次提交 50 个 SPU，无需逐个处理。
 // @match        https://agentseller.temu.com/*
 // @run-at       document-idle
@@ -9,6 +9,16 @@
 // @downloadURL  https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temu%E5%AE%9E%E6%8B%8D%E5%9B%BE%E7%9B%B4%E4%BC%A0%E8%87%AA%E6%94%B9%E7%89%88%E6%89%B9%E9%87%8F%E7%89%88.user.js
 // @updateURL    https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temu%E5%AE%9E%E6%8B%8D%E5%9B%BE%E7%9B%B4%E4%BC%A0%E8%87%AA%E6%94%B9%E7%89%88%E6%89%B9%E9%87%8F%E7%89%88.user.js
 // ==/UserScript==
+
+/* ============================================================
+ * 注意：本脚本 ≠ 同仓库的「合规中心-实拍图-自改版.user.js」
+ *   本脚本走 batch_upload（一次 50 个 SPU，不需要 sku_id，需要 cate_id_list）
+ *   那一个走 upload_new  （一次 1 个 SPU，需要 sku_id，不需要 cate_id_list）
+ * 两者接口不同，结论和代码不能互相套用。
+ *
+ * 完整说明（设计取舍 / 踩过的坑 / 未验证的假设）见：
+ *   TEMU实拍图直传-自改版批量版-说明.md
+ * ============================================================ */
 
 /* ============================================================================
  * 接口全景（全部经真实抓包 / 公开脚本交叉确认）
@@ -457,6 +467,6 @@
   setInterval(apply, 900);
   apply();
 
-  log('脚本已就绪 v1.0.3');
+  log('脚本已就绪 v1.0.4');
   refresh();
 })();
