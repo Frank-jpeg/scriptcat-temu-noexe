@@ -11,7 +11,7 @@
 // @run-at       document-idle
 // @downloadURL  https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/%E5%90%88%E8%A7%84%E4%B8%AD%E5%BF%83-%E5%95%86%E5%93%81%E5%90%88%E8%A7%84-%E8%87%AA%E5%8A%A8%E7%89%88-%E8%87%AA%E6%94%B9%E7%89%88.user.js
 // @updateURL    https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/%E5%90%88%E8%A7%84%E4%B8%AD%E5%BF%83-%E5%95%86%E5%93%81%E5%90%88%E8%A7%84-%E8%87%AA%E5%8A%A8%E7%89%88-%E8%87%AA%E6%94%B9%E7%89%88.user.js
-// @version      2026.0803.3
+// @version      2026.0803.4
 // ==/UserScript==
 
 const AUTO_COMPLIANCE_CONFIG_KEY = "goldabcd_noexe_auto_compliance_config_v1";
@@ -22,6 +22,7 @@ const AUTO_COMPLIANCE_SCRIPT_NAME = "合规中心-商品合规-自动版-自改�
 const AUTO_COMPLIANCE_LOG_EVENT = "goldabcd-noexe-log-event";
 const AUTO_COMPLIANCE_INTERVAL_MS = 1000 * 60 * 15;
 const AUTO_COMPLIANCE_SUBMIT_INTERVAL_MS = 1000 * 2.5;
+const AUTO_COMPLIANCE_BUTTON_TEXT = "5、自动商品合规";
 const AUTO_COMPLIANCE_DEFAULT_CONFIG = {
     version: 1,
     enabled: false,
@@ -32,6 +33,12 @@ const AUTO_COMPLIANCE_DEFAULT_CONFIG = {
 };
 const autoComplianceOriginalConsoleLog = console.log.bind(console);
 let autoComplianceLogCounter = 0;
+let autoComplianceButtonStats = {
+    active: false,
+    done: 0,
+    pending: 0,
+    total: 0
+};
 
 registerAutoComplianceMenus();
 
@@ -235,11 +242,11 @@ function showAutoComplianceSetupPanel(message, mallId, mallName, config) {
     if (!button) {
         button = document.createElement("button");
         button.id = "auto-compliance-noexe-button";
-        button.textContent = "5、自动商品合规";
         button.style = "z-index:9999;position:absolute;top:340px;left:260px;background-color:pink;border:0px;cursor:pointer;padding:10px;";
         button.title = "点击配置/启停自动商品合规";
         document.body.appendChild(button);
     }
+    renderAutoComplianceButtonText();
     button.onclick = async function() {
         const existingPanel = document.getElementById("auto-compliance-noexe-setup");
         if (existingPanel) {
@@ -349,6 +356,49 @@ function renderAutoComplianceSetupPanel(message, mallId, mallName, config) {
     buttonRow.appendChild(enableButton);
     panel.appendChild(buttonRow);
     document.body.appendChild(panel);
+}
+
+function setAutoComplianceButtonStats(nextStats) {
+    autoComplianceButtonStats = Object.assign({}, autoComplianceButtonStats, nextStats || {});
+    autoComplianceButtonStats.done = Math.max(0, Number(autoComplianceButtonStats.done) || 0);
+    autoComplianceButtonStats.pending = Math.max(0, Number(autoComplianceButtonStats.pending) || 0);
+    autoComplianceButtonStats.total = Math.max(0, Number(autoComplianceButtonStats.total) || 0);
+    renderAutoComplianceButtonText();
+}
+
+function resetAutoComplianceButtonStats(active) {
+    setAutoComplianceButtonStats({
+        active: !!active,
+        done: 0,
+        pending: 0,
+        total: 0
+    });
+}
+
+function incrementAutoComplianceDone(pending) {
+    setAutoComplianceButtonStats({
+        active: true,
+        done: autoComplianceButtonStats.done + 1,
+        pending
+    });
+}
+
+function renderAutoComplianceButtonText() {
+    const button = document.getElementById("auto-compliance-noexe-button");
+    if (!button) return;
+    const stats = autoComplianceButtonStats;
+    const hasNumbers = stats.active || stats.done > 0 || stats.pending > 0 || stats.total > 0;
+    button.textContent = AUTO_COMPLIANCE_BUTTON_TEXT + (hasNumbers ? "(" + stats.done + "/" + stats.pending + "/" + stats.total + ")" : "");
+}
+
+function getAutoComplianceTotalCount(result) {
+    if (!result || typeof result !== "object") return 0;
+    const keys = ["total", "totalCount", "total_count", "count"];
+    for (let i = 0; i < keys.length; i++) {
+        const value = Number(result[keys[i]]);
+        if (Number.isFinite(value) && value > 0) return value;
+    }
+    return 0;
 }
 
 async function copyAutoComplianceText(text) {
@@ -629,13 +679,16 @@ function isEmptyPlainObject(obj) {
         config
     );
     if (!config.enabled) {
+        resetAutoComplianceButtonStats(false);
         showAutoComplianceSetupPanel("自动商品合规当前未启用。保存模板SPU后点“启用自动合规”。", mallId, currentMall.mallName, config);
         return;
     }
     if (!hasTemplateSpu(getEffectiveTemplateSpuMap(config, mallId))) {
+        resetAutoComplianceButtonStats(false);
         showAutoComplianceSetupPanel("当前店铺没有合规参考模板SPU，脚本不会提交线上数据。", mallId, currentMall.mallName, config);
         return;
     }
+    resetAutoComplianceButtonStats(true);
 
     const heguiMap = new Map();
     mallList.forEach(function(mall) {
@@ -659,6 +712,7 @@ function isEmptyPlainObject(obj) {
             config = await loadAutoComplianceConfig();
             if (!config.enabled) {
                 autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, "已停用");
+                resetAutoComplianceButtonStats(false);
                 isProcessing = false;
                 return;
             }
@@ -671,6 +725,7 @@ function isEmptyPlainObject(obj) {
             window.mallId = mallId;
             mallName = mall.mallName || mallId;
             heguiMap.set(mallId, []);
+            resetAutoComplianceButtonStats(true);
 
             const templateSpuMap = getEffectiveTemplateSpuMap(config, mallId);
             if (!hasTemplateSpu(templateSpuMap)) {
@@ -740,6 +795,7 @@ function isEmptyPlainObject(obj) {
 
     async function mainFun(catSpuMap) {
         autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, mallName, "合规扫描开始");
+        let scannedCount = 0;
         let pageNum = 1;
         let pageQueryData = {
             success: true,
@@ -763,6 +819,7 @@ function isEmptyPlainObject(obj) {
                 break;
             }
             const productList = pageQueryData.result && pageQueryData.result.data ? pageQueryData.result.data : [];
+            scannedCount += productList.length;
             productList.forEach(function(product) {
                 const queue = heguiMap.get(mallId) || [];
                 const exists = queue.some(function(item) {
@@ -780,6 +837,12 @@ function isEmptyPlainObject(obj) {
                 queue.push({ product, templateProduct });
                 heguiMap.set(mallId, queue);
             });
+            const queue = heguiMap.get(mallId) || [];
+            setAutoComplianceButtonStats({
+                active: true,
+                pending: queue.length,
+                total: Math.max(autoComplianceButtonStats.total, getAutoComplianceTotalCount(pageQueryData.result), scannedCount)
+            });
         }
 
         if ((heguiMap.get(mallId) || []).length === 0) {
@@ -794,6 +857,10 @@ function isEmptyPlainObject(obj) {
 
         isCommitingReturn = false;
         const item = heguiData.shift();
+        setAutoComplianceButtonStats({
+            active: true,
+            pending: heguiData.length
+        });
 
         try {
             const product = item.product;
@@ -895,6 +962,7 @@ function isEmptyPlainObject(obj) {
         } catch (e) {
             autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, mallName, "提交合规失败", e);
         } finally {
+            incrementAutoComplianceDone(heguiData.length);
             isCommitingReturn = true;
             if (heguiData.length === 0) isProcessing = false;
         }
