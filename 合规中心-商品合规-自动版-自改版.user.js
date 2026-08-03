@@ -11,12 +11,12 @@
 // @run-at       document-idle
 // @downloadURL  https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/%E5%90%88%E8%A7%84%E4%B8%AD%E5%BF%83-%E5%95%86%E5%93%81%E5%90%88%E8%A7%84-%E8%87%AA%E5%8A%A8%E7%89%88-%E8%87%AA%E6%94%B9%E7%89%88.user.js
 // @updateURL    https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/%E5%90%88%E8%A7%84%E4%B8%AD%E5%BF%83-%E5%95%86%E5%93%81%E5%90%88%E8%A7%84-%E8%87%AA%E5%8A%A8%E7%89%88-%E8%87%AA%E6%94%B9%E7%89%88.user.js
-// @version      2026.0803.2
+// @version      2026.0803.3
 // ==/UserScript==
 
 const AUTO_COMPLIANCE_CONFIG_KEY = "goldabcd_noexe_auto_compliance_config_v1";
 const AUTO_COMPLIANCE_BACKUP_KEY = "goldabcd_noexe_auto_compliance_config_v1_local_backup";
-const AUTO_COMPLIANCE_DEFAULT_TEMPLATE = "全部分类";
+const AUTO_COMPLIANCE_DEFAULT_TEMPLATE = "默认模板";
 const AUTO_COMPLIANCE_TASK_NAME = "自动商品合规-自改版-";
 const AUTO_COMPLIANCE_SCRIPT_NAME = "合规中心-商品合规-自动版-自改版";
 const AUTO_COMPLIANCE_LOG_EVENT = "goldabcd-noexe-log-event";
@@ -26,7 +26,7 @@ const AUTO_COMPLIANCE_DEFAULT_CONFIG = {
     version: 1,
     enabled: false,
     templateSpuMap: {
-        "全部分类": ""
+        "默认模板": ""
     },
     mallTemplateSpuMap: {}
 };
@@ -212,7 +212,7 @@ async function openAutoComplianceTemplatePrompt() {
     const currentName = Object.keys(currentMap).find(function(name) {
         return String(currentMap[name] || "").trim();
     }) || AUTO_COMPLIANCE_DEFAULT_TEMPLATE;
-    const nextName = prompt("请输入模板名称。可用类目名，也可用“全部分类”。", currentName);
+    const nextName = prompt("请输入模板名称（仅用于备注；实际按模板SPU的TEMU类目ID匹配）。", currentName);
     if (nextName == null) return;
     const templateName = normalizeTemplateName(nextName);
     const currentSpu = String(currentMap[templateName] || currentMap[currentName] || "").trim();
@@ -231,50 +231,90 @@ async function openAutoComplianceTemplatePrompt() {
 }
 
 function showAutoComplianceSetupPanel(message, mallId, mallName, config) {
-    if (document.getElementById("auto-compliance-noexe-setup")) return;
+    let button = document.getElementById("auto-compliance-noexe-button");
+    if (!button) {
+        button = document.createElement("button");
+        button.id = "auto-compliance-noexe-button";
+        button.textContent = "5、自动商品合规";
+        button.style = "z-index:9999;position:absolute;top:340px;left:260px;background-color:pink;border:0px;cursor:pointer;padding:10px;";
+        button.title = "点击配置/启停自动商品合规";
+        document.body.appendChild(button);
+    }
+    button.onclick = async function() {
+        const existingPanel = document.getElementById("auto-compliance-noexe-setup");
+        if (existingPanel) {
+            existingPanel.remove();
+            return;
+        }
+        const latestConfig = await loadAutoComplianceConfig();
+        renderAutoComplianceSetupPanel(message, mallId || getCurrentMallId(), mallName, latestConfig || config);
+    };
+}
+
+function renderAutoComplianceSetupPanel(message, mallId, mallName, config) {
+    const existingPanel = document.getElementById("auto-compliance-noexe-setup");
+    if (existingPanel) existingPanel.remove();
+
     const panel = document.createElement("div");
     panel.id = "auto-compliance-noexe-setup";
-    panel.style = "z-index:9999;position:fixed;top:80px;left:20px;width:410px;background:#fff7d6;color:#111;border:1px solid #f59e0b;border-radius:8px;padding:12px;font-size:13px;line-height:1.5;box-shadow:0 8px 24px rgba(0,0,0,.18);";
+    panel.style = "z-index:9999;position:absolute;top:382px;left:260px;width:360px;background:#fff;color:#111;border:1px solid #ff8fb3;border-radius:6px;padding:10px;font-size:13px;line-height:1.45;box-shadow:0 6px 18px rgba(0,0,0,.15);";
 
     const title = document.createElement("div");
-    title.textContent = "合规中心-商品合规-自动版-自改版";
-    title.style = "font-weight:700;margin-bottom:6px;";
+    title.textContent = "5、自动商品合规";
+    title.style = "font-weight:700;margin-bottom:6px;padding-right:50px;";
     panel.appendChild(title);
+
+    const closeButton = document.createElement("button");
+    closeButton.textContent = "关闭";
+    closeButton.style = "position:absolute;top:8px;right:8px;background:#f3f4f6;color:#111;border:1px solid #ddd;border-radius:4px;padding:2px 8px;cursor:pointer;";
+    closeButton.onclick = function() {
+        panel.remove();
+    };
+    panel.appendChild(closeButton);
 
     const messageDiv = document.createElement("div");
     messageDiv.textContent = message || "先配置当前店铺的合规参考模板SPU，再启用自动合规。";
-    messageDiv.style = "margin-bottom:8px;";
+    messageDiv.style = "margin-bottom:6px;";
     panel.appendChild(messageDiv);
 
     const mallDiv = document.createElement("div");
     mallDiv.textContent = "当前店铺：" + (mallName || mallId || "未识别");
-    mallDiv.style = "font-size:12px;margin-bottom:8px;";
+    mallDiv.style = "font-size:12px;margin-bottom:6px;color:#555;";
     panel.appendChild(mallDiv);
 
+    const templateMap = getEffectiveTemplateSpuMap(config || AUTO_COMPLIANCE_DEFAULT_CONFIG, mallId);
+    const existingName = Object.keys(templateMap).find(function(key) {
+        return String(templateMap[key] || "").trim();
+    }) || "";
+
     const nameInput = document.createElement("input");
-    nameInput.placeholder = "模板名称，例如 全部分类";
-    nameInput.value = AUTO_COMPLIANCE_DEFAULT_TEMPLATE;
-    nameInput.style = "width:100%;height:30px;box-sizing:border-box;margin:4px 0;padding:5px 8px;border:1px solid #999;border-radius:6px;";
+    nameInput.placeholder = "模板名称（仅备注，例如 帽子）";
+    nameInput.value = existingName;
+    nameInput.style = "width:100%;height:30px;box-sizing:border-box;margin:4px 0;padding:5px 8px;border:1px solid #bbb;border-radius:4px;";
     panel.appendChild(nameInput);
 
     const spuInput = document.createElement("input");
     spuInput.placeholder = "合规参考模板SPU，只填数字";
-    const templateMap = getEffectiveTemplateSpuMap(config || AUTO_COMPLIANCE_DEFAULT_CONFIG, mallId);
     const existingSpu = Object.keys(templateMap).map(function(key) {
         return templateMap[key];
     }).find(function(spuId) {
         return String(spuId || "").trim();
     });
     spuInput.value = existingSpu || "";
-    spuInput.style = "width:100%;height:30px;box-sizing:border-box;margin:4px 0 8px 0;padding:5px 8px;border:1px solid #999;border-radius:6px;";
+    spuInput.style = "width:100%;height:30px;box-sizing:border-box;margin:4px 0 6px 0;padding:5px 8px;border:1px solid #bbb;border-radius:4px;";
     panel.appendChild(spuInput);
+
+    const matchHint = document.createElement("div");
+    matchHint.textContent = "匹配规则：名称只做备注；脚本按模板SPU的TEMU类目ID(cat_id)匹配目标商品。";
+    matchHint.style = "font-size:12px;color:#555;margin-bottom:8px;";
+    panel.appendChild(matchHint);
 
     const buttonRow = document.createElement("div");
     buttonRow.style = "display:flex;gap:8px;align-items:center;";
 
     const saveButton = document.createElement("button");
     saveButton.textContent = "保存模板";
-    saveButton.style = "height:28px;background:#1677ff;color:#fff;border:0;border-radius:6px;padding:0 10px;cursor:pointer;";
+    saveButton.style = "height:28px;background:pink;color:#111;border:0;border-radius:4px;padding:0 10px;cursor:pointer;";
     saveButton.onclick = async function() {
         const targetMallId = mallId || getCurrentMallId();
         const templateName = normalizeTemplateName(nameInput.value);
@@ -296,13 +336,13 @@ function showAutoComplianceSetupPanel(message, mallId, mallName, config) {
     };
 
     const enableButton = document.createElement("button");
-    enableButton.textContent = config && config.enabled ? "已启用" : "启用自动合规";
-    enableButton.style = "height:28px;background:#16a34a;color:#fff;border:0;border-radius:6px;padding:0 10px;cursor:pointer;";
+    enableButton.textContent = config && config.enabled ? "停用自动合规" : "启用自动合规";
+    enableButton.style = "height:28px;background:pink;color:#111;border:0;border-radius:4px;padding:0 10px;cursor:pointer;";
     enableButton.onclick = async function() {
         const nextConfig = await loadAutoComplianceConfig();
-        nextConfig.enabled = true;
+        nextConfig.enabled = !nextConfig.enabled;
         await saveAutoComplianceConfig(nextConfig);
-        alert("已启用自动商品合规，刷新页面后生效");
+        alert(nextConfig.enabled ? "已启用自动商品合规，刷新页面后生效" : "已停用自动商品合规，刷新页面后生效");
     };
 
     buttonRow.appendChild(saveButton);
@@ -582,6 +622,12 @@ function isEmptyPlainObject(obj) {
 
     const mallList = normalizeMallList(userInfoData, mallId);
     const currentMall = mallList[0] || { mallId, mallName: mallId, mallMode: 0 };
+    showAutoComplianceSetupPanel(
+        config.enabled ? "自动商品合规已启用。点击可调整模板或停用。" : "自动商品合规当前未启用。保存模板SPU后点“启用自动合规”。",
+        mallId,
+        currentMall.mallName,
+        config
+    );
     if (!config.enabled) {
         showAutoComplianceSetupPanel("自动商品合规当前未启用。保存模板SPU后点“启用自动合规”。", mallId, currentMall.mallName, config);
         return;
