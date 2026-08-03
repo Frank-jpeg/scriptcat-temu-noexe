@@ -21,6 +21,8 @@ TEMU ScriptCat 自改版脚本，去掉本地下载器依赖，并支持 GitHub 
 
 以后修改脚本时提高 `@version` 并推送到 GitHub，ScriptCat 的“检查更新”即可更新。
 
+已安装旧文件名 `合规中心-商品合规-自动版-自改版.user.js` 的用户，自动商品合规需要删除旧脚本后按第 5 个新地址重装一次；配置 key 未改，模板配置通常会保留。
+
 ## 维护发布
 
 本地维护目录：`/Users/mini/Desktop/codex项目/TEMU 脚本`
@@ -39,6 +41,8 @@ git@github.com:Frank-jpeg/scriptcat-temu-noexe.git
 4. 确认 `@updateURL` 和 `@downloadURL` 指向 `Frank-jpeg/scriptcat-temu-noexe`。
 5. 提交并推送到 `main`。
 6. 用新 raw 地址和旧 raw 地址各测试一次，确认旧地址仍能重定向到新仓库。
+
+如果重命名 `.user.js`，必须同步脚本头 `@updateURL` / `@downloadURL`、README 安装地址，并提醒已安装旧文件名的用户重装一次。
 
 旧仓库地址 `jianpanlan0-svg/scriptcat-temu-noexe` 已转移到 `Frank-jpeg/scriptcat-temu-noexe`。不要在旧账号重新创建同名仓库，否则旧用户的自动更新重定向可能失效。
 
