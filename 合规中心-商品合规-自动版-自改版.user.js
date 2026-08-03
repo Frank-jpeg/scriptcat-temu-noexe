@@ -11,13 +11,15 @@
 // @run-at       document-idle
 // @downloadURL  https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/%E5%90%88%E8%A7%84%E4%B8%AD%E5%BF%83-%E5%95%86%E5%93%81%E5%90%88%E8%A7%84-%E8%87%AA%E5%8A%A8%E7%89%88-%E8%87%AA%E6%94%B9%E7%89%88.user.js
 // @updateURL    https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/%E5%90%88%E8%A7%84%E4%B8%AD%E5%BF%83-%E5%95%86%E5%93%81%E5%90%88%E8%A7%84-%E8%87%AA%E5%8A%A8%E7%89%88-%E8%87%AA%E6%94%B9%E7%89%88.user.js
-// @version      2026.0803.1
+// @version      2026.0803.2
 // ==/UserScript==
 
 const AUTO_COMPLIANCE_CONFIG_KEY = "goldabcd_noexe_auto_compliance_config_v1";
 const AUTO_COMPLIANCE_BACKUP_KEY = "goldabcd_noexe_auto_compliance_config_v1_local_backup";
 const AUTO_COMPLIANCE_DEFAULT_TEMPLATE = "全部分类";
 const AUTO_COMPLIANCE_TASK_NAME = "自动商品合规-自改版-";
+const AUTO_COMPLIANCE_SCRIPT_NAME = "合规中心-商品合规-自动版-自改版";
+const AUTO_COMPLIANCE_LOG_EVENT = "goldabcd-noexe-log-event";
 const AUTO_COMPLIANCE_INTERVAL_MS = 1000 * 60 * 15;
 const AUTO_COMPLIANCE_SUBMIT_INTERVAL_MS = 1000 * 2.5;
 const AUTO_COMPLIANCE_DEFAULT_CONFIG = {
@@ -28,6 +30,8 @@ const AUTO_COMPLIANCE_DEFAULT_CONFIG = {
     },
     mallTemplateSpuMap: {}
 };
+const autoComplianceOriginalConsoleLog = console.log.bind(console);
+let autoComplianceLogCounter = 0;
 
 registerAutoComplianceMenus();
 
@@ -38,7 +42,7 @@ async function loadAutoComplianceConfig() {
         try {
             config = JSON.parse(raw);
         } catch (e) {
-            console.log(AUTO_COMPLIANCE_TASK_NAME, "配置 JSON 解析失败，使用默认配置", e);
+            autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, "配置 JSON 解析失败，使用默认配置", e);
             config = null;
         }
     }
@@ -87,7 +91,7 @@ function normalizeTemplateSpuMap(value) {
         try {
             map = JSON.parse(map);
         } catch (e) {
-            console.log(AUTO_COMPLIANCE_TASK_NAME, "模板SPU配置 JSON 解析失败", e);
+            autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, "模板SPU配置 JSON 解析失败", e);
             map = {};
         }
     }
@@ -137,7 +141,7 @@ async function getAutoComplianceStoredValue(key, fallbackValue) {
             if (value !== undefined && value !== null && String(value).trim() !== "") return value;
         }
     } catch (e) {
-        console.log(AUTO_COMPLIANCE_TASK_NAME, "读取 ScriptCat 配置失败，改用 localStorage", e);
+        autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, "读取 ScriptCat 配置失败，改用 localStorage", e);
     }
     try {
         const value = localStorage.getItem(key);
@@ -145,7 +149,7 @@ async function getAutoComplianceStoredValue(key, fallbackValue) {
         const backupValue = localStorage.getItem(AUTO_COMPLIANCE_BACKUP_KEY);
         if (backupValue !== undefined && backupValue !== null && String(backupValue).trim() !== "") return backupValue;
     } catch (e) {
-        console.log(AUTO_COMPLIANCE_TASK_NAME, "读取 localStorage 配置失败", e);
+        autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, "读取 localStorage 配置失败", e);
     }
     return fallbackValue;
 }
@@ -155,7 +159,7 @@ async function setAutoComplianceStoredValue(key, value) {
         localStorage.setItem(key, value);
         localStorage.setItem(AUTO_COMPLIANCE_BACKUP_KEY, value);
     } catch (e) {
-        console.log(AUTO_COMPLIANCE_TASK_NAME, "保存 localStorage 配置失败", e);
+        autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, "保存 localStorage 配置失败", e);
     }
     try {
         if (typeof GM_setValue === "function") {
@@ -163,7 +167,7 @@ async function setAutoComplianceStoredValue(key, value) {
             if (result && typeof result.then === "function") await result;
         }
     } catch (e) {
-        console.log(AUTO_COMPLIANCE_TASK_NAME, "保存 ScriptCat 配置失败", e);
+        autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, "保存 ScriptCat 配置失败", e);
     }
 }
 
@@ -314,7 +318,7 @@ async function copyAutoComplianceText(text) {
             return;
         }
     } catch (e) {
-        console.log(AUTO_COMPLIANCE_TASK_NAME, "GM_setClipboard 失败", e);
+        autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, "GM_setClipboard 失败", e);
     }
     try {
         await navigator.clipboard.writeText(text);
@@ -324,23 +328,198 @@ async function copyAutoComplianceText(text) {
 }
 
 async function postTemu(url, data) {
-    const res = await fetch(url, {
-        method: "POST",
-        credentials: "include",
-        headers: {
-            accept: "*/*",
-            "content-type": "application/json",
-            mallid: window.mallId || getCurrentMallId() || ""
-        },
-        body: JSON.stringify(data || {})
-    });
-    let result;
-    try {
-        result = await res.json();
-    } catch (e) {
-        throw new Error("TEMU接口响应不是JSON：" + url + " HTTP " + res.status);
+    const logToken = autoComplianceLogStart(url);
+    let logFinished = false;
+    function finishLog(type, message) {
+        if (logFinished) return;
+        logFinished = true;
+        autoComplianceLogFinish(logToken, type, message);
     }
-    return result;
+
+    try {
+        const res = await fetch(url, {
+            method: "POST",
+            credentials: "include",
+            headers: {
+                accept: "*/*",
+                "content-type": "application/json",
+                mallid: window.mallId || getCurrentMallId() || ""
+            },
+            body: JSON.stringify(data || {})
+        });
+        let result;
+        try {
+            result = await res.json();
+        } catch (e) {
+            finishLog("error", autoComplianceEndpointTitle(url) + "；HTTP " + res.status + "；响应 JSON 解析失败：" + e.message);
+            throw new Error("TEMU接口响应不是JSON：" + url + " HTTP " + res.status);
+        }
+        const message = autoComplianceLogMessageFor(url, res.status, data, result, "");
+        if (!res.ok) {
+            finishLog("error", message);
+        } else if (result && result.success === false) {
+            finishLog("fail", message || "接口返回 success=false");
+        } else {
+            finishLog("success", message);
+        }
+        return result;
+    } catch (e) {
+        finishLog("error", autoComplianceEndpointTitle(url) + "；" + (e && e.message ? e.message : String(e)));
+        throw e;
+    }
+}
+
+function autoComplianceLogStart(url) {
+    const id = Date.now() + "-" + (++autoComplianceLogCounter) + "-" + Math.random().toString(16).slice(2);
+    const now = Date.now();
+    autoComplianceEmitLog({
+        phase: "start",
+        id,
+        url,
+        endpoint: autoComplianceEndpointName(url),
+        endpointTitle: autoComplianceEndpointTitle(url),
+        time: now
+    });
+    return {
+        id,
+        url,
+        startedAt: typeof performance !== "undefined" ? performance.now() : now
+    };
+}
+
+function autoComplianceLogFinish(token, type, message) {
+    const now = Date.now();
+    const endedAt = typeof performance !== "undefined" ? performance.now() : now;
+    autoComplianceEmitLog({
+        phase: "finish",
+        id: token.id,
+        url: token.url,
+        endpoint: autoComplianceEndpointName(token.url),
+        endpointTitle: autoComplianceEndpointTitle(token.url),
+        type,
+        message: message || "",
+        time: now,
+        duration: Math.max(0, Math.round(endedAt - token.startedAt))
+    });
+}
+
+function autoComplianceEmitLog(detail) {
+    try {
+        window.dispatchEvent(new CustomEvent(AUTO_COMPLIANCE_LOG_EVENT, {
+            detail: Object.assign({
+                scriptName: AUTO_COMPLIANCE_SCRIPT_NAME
+            }, detail)
+        }));
+    } catch (e) {
+        autoComplianceOriginalConsoleLog(AUTO_COMPLIANCE_TASK_NAME, "运行日志写入失败", e);
+    }
+}
+
+function autoComplianceEndpointName(url) {
+    try {
+        return new URL(url, location.href).pathname;
+    } catch (e) {
+        return String(url || "");
+    }
+}
+
+function autoComplianceEndpointTitle(url) {
+    const path = autoComplianceEndpointName(url);
+    if (path.indexOf("/api/seller/auth/userInfo") >= 0) return "读取店铺列表";
+    if (path.indexOf("/compliance_property/page_query") >= 0) return "查询商品合规列表";
+    if (path.indexOf("/compliance_property/query_detail") >= 0) return "查询商品合规详情";
+    if (path.indexOf("/compliance_property/edit_compliance") >= 0) return "提交商品合规";
+    return "商品合规接口";
+}
+
+function autoComplianceResultMessage(data) {
+    if (!data || typeof data !== "object") return "";
+    return data.error_msg || data.errorMsg || data.msg || data.message || data.error || "";
+}
+
+function autoComplianceRequestSummary(data) {
+    if (!data || typeof data !== "object") return "";
+    const parts = [];
+    if (data.page_num !== undefined) parts.push("page=" + data.page_num);
+    if (data.page_size !== undefined) parts.push("pageSize=" + data.page_size);
+    if (Array.isArray(data.spu_id_list)) parts.push("SPU=" + data.spu_id_list.length);
+    if (Array.isArray(data.wait_task_list)) parts.push("待办任务=" + data.wait_task_list.length);
+    if (Array.isArray(data.template_edit_request_list)) parts.push("提交项=" + data.template_edit_request_list.length);
+    if (Array.isArray(data.task_type_list)) parts.push("任务类型=" + data.task_type_list.join(","));
+    if (Array.isArray(data.task_status_list)) parts.push("任务状态=" + data.task_status_list.join(","));
+    if (Array.isArray(data.goods_status_list)) parts.push("商品状态=" + data.goods_status_list.join(","));
+    if (data.spu_id !== undefined) parts.push("spu=" + data.spu_id);
+    return parts.length ? "请求：" + parts.join("，") : "";
+}
+
+function autoComplianceResponseSummary(result) {
+    if (!result || typeof result !== "object") return "";
+    const parts = [];
+    if (result.success !== undefined) parts.push("success=" + result.success);
+    const target = result.result && typeof result.result === "object" ? result.result : result;
+    ["total", "totalCount", "count"].forEach(function(key) {
+        if (target[key] !== undefined) parts.push(key + "=" + target[key]);
+    });
+    if (Array.isArray(target.data)) parts.push("data=" + target.data.length);
+    if (Array.isArray(target.template_list)) parts.push("模板项=" + target.template_list.length);
+    if (Array.isArray(target.sku_info_list)) parts.push("SKU=" + target.sku_info_list.length);
+    const msg = autoComplianceResultMessage(result);
+    if (msg) parts.push("消息=" + msg);
+    return parts.length ? "返回：" + parts.join("，") : "";
+}
+
+function autoComplianceLogMessageFor(url, status, requestData, result, fallbackMessage) {
+    const parts = [autoComplianceEndpointTitle(url), "HTTP " + status, autoComplianceRequestSummary(requestData), autoComplianceResponseSummary(result), fallbackMessage || ""];
+    return parts.filter(Boolean).join("；");
+}
+
+function autoComplianceBusinessLog() {
+    autoComplianceOriginalConsoleLog.apply(console, arguments);
+    try {
+        const text = autoComplianceFormatLogArgs(Array.prototype.slice.call(arguments));
+        if (!text || /^运行日志写入失败/.test(text)) return;
+        autoComplianceEmitLog({
+            phase: "detail",
+            type: autoComplianceBusinessLogType(text),
+            endpointTitle: autoComplianceBusinessLogTitle(text),
+            endpoint: "业务明细",
+            message: text,
+            source: "",
+            time: Date.now(),
+            duration: 0
+        });
+    } catch (e) {
+        autoComplianceOriginalConsoleLog(AUTO_COMPLIANCE_TASK_NAME, "业务明细日志捕获失败", e);
+    }
+}
+
+function autoComplianceFormatLogArgs(args) {
+    return args.map(function(item) {
+        if (item === undefined) return "undefined";
+        if (item === null) return "null";
+        if (typeof item === "string") return item;
+        if (typeof item === "number" || typeof item === "boolean") return String(item);
+        if (item instanceof Error) return item.stack || item.message || String(item);
+        try {
+            return JSON.stringify(item, null, 2);
+        } catch (e) {
+            return String(item);
+        }
+    }).join(" ").trim();
+}
+
+function autoComplianceBusinessLogType(text) {
+    if (/失败|错误|不可|不支持|缺少|异常|error|success=false/i.test(text)) return "detail-error";
+    return "detail";
+}
+
+function autoComplianceBusinessLogTitle(text) {
+    if (text.indexOf("合规成功") >= 0) return "商品合规成功";
+    if (text.indexOf("合规失败") >= 0 || text.indexOf("接口失败") >= 0) return "商品合规失败";
+    if (text.indexOf("缺少模板") >= 0 || text.indexOf("缺少合规参考模板") >= 0) return "缺少合规模板";
+    if (text.indexOf("排队中") >= 0) return "商品合规排队";
+    if (text.indexOf("扫描开始") >= 0) return "商品合规扫描";
+    return "商品合规明细";
 }
 
 function getCurrentMallId() {
@@ -391,12 +570,12 @@ function isEmptyPlainObject(obj) {
     try {
         userInfoData = await postTemu("https://agentseller.temu.com/api/seller/auth/userInfo", {});
     } catch (e) {
-        console.log(AUTO_COMPLIANCE_TASK_NAME, "获取店铺列表失败", e);
+        autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, "获取店铺列表失败", e);
         showAutoComplianceSetupPanel("获取店铺列表失败，请确认已登录 TEMU 商家后台。", mallId, "", config);
         return;
     }
     if (!userInfoData.success) {
-        console.log(AUTO_COMPLIANCE_TASK_NAME, getErrorText(userInfoData));
+        autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, getErrorText(userInfoData));
         showAutoComplianceSetupPanel(getErrorText(userInfoData), mallId, "", config);
         return;
     }
@@ -433,7 +612,7 @@ function isEmptyPlainObject(obj) {
         try {
             config = await loadAutoComplianceConfig();
             if (!config.enabled) {
-                console.log(AUTO_COMPLIANCE_TASK_NAME, "已停用");
+                autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, "已停用");
                 isProcessing = false;
                 return;
             }
@@ -449,20 +628,20 @@ function isEmptyPlainObject(obj) {
 
             const templateSpuMap = getEffectiveTemplateSpuMap(config, mallId);
             if (!hasTemplateSpu(templateSpuMap)) {
-                console.log(AUTO_COMPLIANCE_TASK_NAME, mallName, "缺少合规参考模板，跳过", getMallMode(mall));
+                autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, mallName, "缺少合规参考模板，跳过", getMallMode(mall));
                 isProcessing = false;
                 return;
             }
 
             const catSpuMap = await initCatSPUMap(templateSpuMap);
             if (catSpuMap.size < 1) {
-                console.log(AUTO_COMPLIANCE_TASK_NAME, mallName, "没有可用的合规参考模板");
+                autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, mallName, "没有可用的合规参考模板");
                 isProcessing = false;
                 return;
             }
             await mainFun(catSpuMap);
         } catch (e) {
-            console.log(AUTO_COMPLIANCE_TASK_NAME, mallName, "轮询失败", e);
+            autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, mallName, "轮询失败", e);
             isProcessing = false;
         }
     }
@@ -479,7 +658,7 @@ function isEmptyPlainObject(obj) {
                 goods_status_list: [1, 2]
             });
             if (!pageQueryDataTemplate.success || !pageQueryDataTemplate.result || !pageQueryDataTemplate.result.data || pageQueryDataTemplate.result.data.length === 0) {
-                console.log(AUTO_COMPLIANCE_TASK_NAME, mallName, "没有获取到模板SPU的合规数据", templateName, spuId, getErrorText(pageQueryDataTemplate));
+                autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, mallName, "没有获取到模板SPU的合规数据", templateName, spuId, getErrorText(pageQueryDataTemplate));
                 continue;
             }
 
@@ -490,7 +669,7 @@ function isEmptyPlainObject(obj) {
                 wait_task_list: productTemplate.wait_task_dtolist
             });
             if (!queryDetailDataTemplate.result || !queryDetailDataTemplate.result.template_list) {
-                console.log(AUTO_COMPLIANCE_TASK_NAME, mallName, "模板明细读取失败", templateName, spuId, getErrorText(queryDetailDataTemplate));
+                autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, mallName, "模板明细读取失败", templateName, spuId, getErrorText(queryDetailDataTemplate));
                 continue;
             }
 
@@ -514,7 +693,7 @@ function isEmptyPlainObject(obj) {
     }
 
     async function mainFun(catSpuMap) {
-        console.log(AUTO_COMPLIANCE_TASK_NAME, mallName, "合规扫描开始");
+        autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, mallName, "合规扫描开始");
         let pageNum = 1;
         let pageQueryData = {
             success: true,
@@ -534,7 +713,7 @@ function isEmptyPlainObject(obj) {
             });
 
             if (!pageQueryData.success) {
-                console.log(AUTO_COMPLIANCE_TASK_NAME, mallName, "查询待合规商品失败", getErrorText(pageQueryData));
+                autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, mallName, "查询待合规商品失败", getErrorText(pageQueryData));
                 break;
             }
             const productList = pageQueryData.result && pageQueryData.result.data ? pageQueryData.result.data : [];
@@ -544,12 +723,12 @@ function isEmptyPlainObject(obj) {
                     return item.product.spu_id === product.spu_id;
                 });
                 if (exists) {
-                    console.log(AUTO_COMPLIANCE_TASK_NAME, mallName, "SPU(" + product.spu_id + ")合规排队中");
+                    autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, mallName, "SPU(" + product.spu_id + ")合规排队中");
                     return;
                 }
                 const templateProduct = catSpuMap.get(String(product.cat_id));
                 if (!templateProduct) {
-                    console.log(AUTO_COMPLIANCE_TASK_NAME, mallName, "缺少模板，SPU:" + product.spu_id + "，类目ID:" + product.cat_id + "，类目名称:" + product.cat_name);
+                    autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, mallName, "缺少模板，SPU:" + product.spu_id + "，类目ID:" + product.cat_id + "，类目名称:" + product.cat_name);
                     return;
                 }
                 queue.push({ product, templateProduct });
@@ -559,7 +738,7 @@ function isEmptyPlainObject(obj) {
 
         if ((heguiMap.get(mallId) || []).length === 0) {
             isProcessing = false;
-            console.log(AUTO_COMPLIANCE_TASK_NAME, mallName, "没有需要合规的商品");
+            autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, mallName, "没有需要合规的商品");
         }
     }
 
@@ -579,7 +758,7 @@ function isEmptyPlainObject(obj) {
                 wait_task_list: product.wait_task_dtolist
             });
             if (!queryDetailData.result || !queryDetailData.result.template_list) {
-                console.log(AUTO_COMPLIANCE_TASK_NAME, mallName, getErrorText(queryDetailData) + "，接口报错-->SPU：" + product.spu_id);
+                autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, mallName, getErrorText(queryDetailData) + "，接口报错-->SPU：" + product.spu_id);
                 return;
             }
 
@@ -604,7 +783,7 @@ function isEmptyPlainObject(obj) {
 
                 if (!taskType2ValueTemplate) {
                     if (task.task_name !== "土耳其负责人") {
-                        console.log(AUTO_COMPLIANCE_TASK_NAME, mallName, "参考模板缺少：" + task.task_name + "，SPU：" + product.spu_id);
+                        autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, mallName, "参考模板缺少：" + task.task_name + "，SPU：" + product.spu_id);
                         isFillSuccess = false;
                     }
                     return;
@@ -616,13 +795,13 @@ function isEmptyPlainObject(obj) {
 
                 if (Number(task.task_type) === 166) {
                     if (!skuInfoList.length) {
-                        console.log(AUTO_COMPLIANCE_TASK_NAME, mallName, product.spu_id + "的‘商品包装材质信息收集’是空的");
+                        autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, mallName, product.spu_id + "的‘商品包装材质信息收集’是空的");
                         taskType2Value.sku_group_multi_detail_list = [];
                     } else {
                         taskType2Value.sku_group_multi_detail_list = [{ sku_ids: [], sku_multi_detail: [] }];
                         skuInfoList.forEach(function(sku) {
                             if (!sku.sku_id_template) {
-                                console.log(AUTO_COMPLIANCE_TASK_NAME, mallName, "sku是空的", sku, taskType2ValueTemplate);
+                                autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, mallName, "sku是空的", sku, taskType2ValueTemplate);
                                 isFillSuccess = false;
                                 return;
                             }
@@ -643,12 +822,12 @@ function isEmptyPlainObject(obj) {
                             } else if (taskType2ValueTemplate.sku_multi_detail) {
                                 taskType2Value.sku_group_multi_detail_list[sku.sku_id + ""] = taskType2ValueTemplate.sku_multi_detail[sku.sku_id_template + ""];
                             } else {
-                                console.log(AUTO_COMPLIANCE_TASK_NAME, mallName, "sku是空的", sku, taskType2ValueTemplate);
+                                autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, mallName, "sku是空的", sku, taskType2ValueTemplate);
                                 isFillSuccess = false;
                             }
                         });
                         if (isEmptyPlainObject(taskType2Value.sku_multi_detail)) {
-                            console.log(AUTO_COMPLIANCE_TASK_NAME, mallName, "缺少需要的数据", taskType2Value.sku_multi_detail, skuInfoList);
+                            autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, mallName, "缺少需要的数据", taskType2Value.sku_multi_detail, skuInfoList);
                             isFillSuccess = false;
                         }
                     }
@@ -657,18 +836,18 @@ function isEmptyPlainObject(obj) {
             });
 
             if (!isFillSuccess) {
-                console.log(AUTO_COMPLIANCE_TASK_NAME, mallName, "SPU(" + product.spu_id + ")合规失败，剩余" + heguiData.length + "个");
+                autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, mallName, "SPU(" + product.spu_id + ")合规失败，剩余" + heguiData.length + "个");
                 return;
             }
 
             const redata = await postTemu("https://agentseller.temu.com/ms/bg-flux-ms/compliance_property/edit_compliance", editComplianceBody);
             if (redata && redata.success) {
-                console.log(AUTO_COMPLIANCE_TASK_NAME, mallName, "SPU(" + product.spu_id + ")合规成功，剩余" + heguiData.length + "个");
+                autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, mallName, "SPU(" + product.spu_id + ")合规成功，剩余" + heguiData.length + "个");
             } else {
-                console.log(AUTO_COMPLIANCE_TASK_NAME, mallName, "SPU(" + product.spu_id + ")合规接口失败：" + getErrorText(redata) + "，剩余" + heguiData.length + "个");
+                autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, mallName, "SPU(" + product.spu_id + ")合规接口失败：" + getErrorText(redata) + "，剩余" + heguiData.length + "个");
             }
         } catch (e) {
-            console.log(AUTO_COMPLIANCE_TASK_NAME, mallName, "提交合规失败", e);
+            autoComplianceBusinessLog(AUTO_COMPLIANCE_TASK_NAME, mallName, "提交合规失败", e);
         } finally {
             isCommitingReturn = true;
             if (heguiData.length === 0) isProcessing = false;
