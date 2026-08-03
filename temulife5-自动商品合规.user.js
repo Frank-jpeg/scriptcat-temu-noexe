@@ -9,9 +9,9 @@
 // @grant        GM_registerMenuCommand
 // @grant        GM_setClipboard
 // @run-at       document-idle
-// @downloadURL  https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/%E5%90%88%E8%A7%84%E4%B8%AD%E5%BF%83-%E5%95%86%E5%93%81%E5%90%88%E8%A7%84-%E8%87%AA%E5%8A%A8%E7%89%88-%E8%87%AA%E6%94%B9%E7%89%88.user.js
-// @updateURL    https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/%E5%90%88%E8%A7%84%E4%B8%AD%E5%BF%83-%E5%95%86%E5%93%81%E5%90%88%E8%A7%84-%E8%87%AA%E5%8A%A8%E7%89%88-%E8%87%AA%E6%94%B9%E7%89%88.user.js
-// @version      2026.0803.4
+// @downloadURL  https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temulife5-%E8%87%AA%E5%8A%A8%E5%95%86%E5%93%81%E5%90%88%E8%A7%84.user.js
+// @updateURL    https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temulife5-%E8%87%AA%E5%8A%A8%E5%95%86%E5%93%81%E5%90%88%E8%A7%84.user.js
+// @version      2026.0803.5
 // ==/UserScript==
 
 const AUTO_COMPLIANCE_CONFIG_KEY = "goldabcd_noexe_auto_compliance_config_v1";
