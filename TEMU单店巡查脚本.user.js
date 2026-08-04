@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEMU单店巡查脚本
 // @namespace    https://local.temu.single.inspector
-// @version      1.9.13
+// @version      1.9.15
 // @description  单店铺 TEMU 巡查：抽检结果、JIT 逾期、合规中心、违规信息、VMI 未收货、价格申报、退货包裹、资金余额
 // @match        https://agentseller.temu.com/*
 // @match        https://seller.kuajingmaihuo.com/*
@@ -17,7 +17,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '1.9.13';
+  const SCRIPT_VERSION = '1.9.15';
   const APP_ID = '__temu_single_store_script_v8';
   const PANEL_ID = `${APP_ID}_panel`;
   const RESULT_DIALOG_ID = `${APP_ID}_result_dialog`;
@@ -53,6 +53,7 @@
   const LOGIN_URL_PREFIXES = [
     'https://agentseller.temu.com/auth/authentication',
     'https://seller.kuajingmaihuo.com/login',
+    'https://seller.kuajingmaihuo.com/settle/seller-login',
   ];
 
   const CHECK_ITEMS = [
@@ -1382,6 +1383,34 @@
     }
   }
 
+  function findAccessAgreementCheckbox() {
+    const checkboxes = Array.from(document.querySelectorAll('input[type="checkbox"]'))
+      .filter((element) => {
+        const visualTarget = element.closest('label') || element.parentElement || element;
+        return visible(visualTarget) && !element.matches('[data-check], [data-role]');
+      });
+    return checkboxes.find((element) => {
+      const context = normalize(`${loginControlContextText(element)} ${element.closest('label')?.innerText || ''}`);
+      return context.includes('账号ID')
+        && context.includes('店铺名称')
+        && (context.includes('隐私政策') || context.includes('已阅读并同意'));
+    }) || checkboxes.find((element) => {
+      const context = normalize(`${loginControlContextText(element)} ${element.closest('label')?.innerText || ''}`);
+      return context.includes('授权') && context.includes('隐私政策');
+    }) || null;
+  }
+
+  function findAccessAuthorizationButton() {
+    return Array.from(document.querySelectorAll('button, [role="button"], a'))
+      .filter((element) => visible(element) && !isDisabled(element))
+      .find((element) => {
+        const text = normalize(element.innerText || element.value || '');
+        return text === '确认授权并前往'
+          || text === '授权登录'
+          || text.includes('确认授权并前往');
+      }) || null;
+  }
+
   function buildLoginStopMessage(state) {
     if (state && state.loginPrompt) {
       return '检测到登录态失效，巡查已暂停，请重新登录后再开始';
@@ -1462,17 +1491,39 @@
   function readAccessState() {
     const body = normalize(document.body.innerText || '');
     const hasRegionPage = body.includes('中国地区') && body.includes('其他地区');
-    const regionButtons = Array.from(document.querySelectorAll('a,button,div,span'))
-      .filter((el) => visible(el) && normalize(el.innerText) === '商家中心');
-    const authButton = Array.from(document.querySelectorAll('button'))
-      .find((el) => visible(el) && normalize(el.innerText).includes('授权登录'));
-    const checkbox = document.querySelector('input[type="checkbox"], input[value="on"]');
+    const regionButtons = Array.from(document.querySelectorAll('a,button,[role="button"],div,span'))
+      .filter((el) => visible(el) && normalize(el.innerText) === '商家中心')
+      .sort((left, right) => {
+        const score = (element) => {
+          let value = 0;
+          if (element.tagName === 'BUTTON' || element.tagName === 'A' || element.getAttribute('role') === 'button') {
+            value += 30;
+          }
+          const className = String(element.className || '').toLowerCase();
+          if (className.includes('goto')) {
+            value += 60;
+          } else if (className.includes('region')) {
+            value += 20;
+          }
+          if (getComputedStyle(element).cursor === 'pointer') {
+            value += 15;
+          }
+          const rect = element.getBoundingClientRect();
+          return value + Math.min(8, rect.width * rect.height / 10000);
+        };
+        return score(right) - score(left);
+      });
+    const authButton = findAccessAuthorizationButton();
+    const checkbox = findAccessAgreementCheckbox();
+    const authorizationPrompt = body.includes('即将前往')
+      && (body.includes('确认授权并前往') || body.includes('授权登录') || body.includes('授权您的账号'));
     return {
       body,
       hasRegionPage,
       regionButtons,
       authButton,
       checkbox,
+      authorizationPrompt,
       loginPrompt: body.includes('扫码登录')
         || body.includes('账号登录')
         || body.includes('手机登录')
@@ -1482,6 +1533,33 @@
 
   async function ensureAccessReady(jobId) {
     const state = readAccessState();
+    if (state.hasRegionPage && state.regionButtons.length) {
+      await appendJobLog('WARN', '检测到地区入口页，自动进入商家中心');
+      clickLikeUser(state.regionButtons[0]);
+      await checkedSleep(jobId, 1500);
+      return false;
+    }
+    if (state.authorizationPrompt || state.authButton) {
+      if (!state.authButton || !state.checkbox) {
+        await updateJobMessage('检测到商家中心授权页，正在等待授权控件加载...');
+        await checkedSleep(jobId, 500, 100);
+        return false;
+      }
+      await appendJobLog('WARN', '检测到商家中心授权页，自动勾选并确认授权');
+      if (!state.checkbox.checked) {
+        clickLikeUser(state.checkbox);
+        await checkedSleep(jobId, 300, 100);
+      }
+      const authButton = findAccessAuthorizationButton() || state.authButton;
+      if (authButton && !isDisabled(authButton)) {
+        clickLikeUser(authButton);
+        await checkedSleep(jobId, 2500);
+        return false;
+      }
+      await updateJobMessage('授权协议已勾选，正在等待“确认授权并前往”按钮可用...');
+      await checkedSleep(jobId, 500, 100);
+      return false;
+    }
     if (isLoginPageUrl()) {
       return await tryLoginFromPage(jobId, readLoginPageState());
     }
@@ -1496,21 +1574,6 @@
       delete currentJob.loginAttemptedAt;
       delete currentJob.loginAttemptedUrl;
       await saveJob(currentJob);
-    }
-    if (state.hasRegionPage && state.regionButtons.length) {
-      await appendJobLog('WARN', '检测到地区入口页，自动进入商家中心');
-      state.regionButtons[0].click();
-      await checkedSleep(jobId, 1500);
-      return false;
-    }
-    if (state.authButton) {
-      await appendJobLog('WARN', '检测到授权页，自动勾选并登录');
-      if (state.checkbox && !state.checkbox.checked) {
-        state.checkbox.click();
-      }
-      state.authButton.click();
-      await checkedSleep(jobId, 2500);
-      return false;
     }
     await assertNotStopped(jobId);
     return true;
