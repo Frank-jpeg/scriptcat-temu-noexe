@@ -22,7 +22,16 @@
 
 本仓库版本把 `public.js` 内联，配置改成脚本内的可视化面板（`GM_getValue` / `GM_setValue`），因此不需要下载器。生命周期 1-4 使用 `goldabcd_noexe_config_v1`，生命周期 5、6 分别使用独立配置键，模板不会互相覆盖。
 
+当前共享配置和运行日志面板只由生命周期 1 创建。生命周期 2-6 不再各自复制面板代码，只通过 `goldabcd-noexe-log-event` 向生命周期 1 发送日志；因此停用生命周期 1 不影响 2-6 的业务执行，但共享面板和日志筛选不会出现。日志保存在页面内存，不跨刷新保留。
+
 关键兼容点：`postTemu` 用 `headers: { "mallid": mallId }` 指定目标店铺，不用切换页面。生命周期 6 为避免与生命周期 5 同页轮询时串店，每次请求显式传入自己的 `mallId`，不改写 `window.mallId`。
+
+### 生命周期 5、6 的当前处理边界
+
+- 生命周期 5 只用 `task_type_list: [60]`、`task_status_list: [2]` 扫描“制造商信息待处理”商品。制造商信息完成后，其他待办合规不会单独把商品重新带入队列；`edit_compliance.success` 也没有再查询确认全部任务完成。
+- 生命周期 5 按 `cat_id` 选模板，模板 `rep_detail_list` 只保留 `default_select` 项；`task_type=166` 的包装材质任务另做 SKU 映射。
+- 生命周期 6 只扫描并复查 `check_type_status_list: [1]`，同时检查 `can_edit`、SKU 和“制造商信息”状态 `3`。它按 `cat_id` 选模板，把模板 `label_image_list` 中 `position=1/2` 的全部图片应用到目标全部 SKU。
+- 生命周期 6 首次延迟 1 分钟，之后每 15 分钟轮店，2.5 秒单任务提交；`confirm_type=4` 是确认提交模式，不是实拍图状态 `4`。
 
 ---
 

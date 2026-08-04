@@ -20,6 +20,11 @@
 - 旧地址 `jianpanlan0-svg/scriptcat-temu-noexe` 依赖 GitHub 转移重定向；不要在旧账号重新创建同名仓库。
 - `jianpanlan0-svg/scriptcat-temu-backup-data` 是“商品信息抓取下载”脚本使用的备份数据仓库，除非用户明确要求，不要改成 `Frank-jpeg`。
 
+## 生命周期脚本边界
+
+- 共享配置和运行日志面板只由 `temu-life-1-price.user.js` 创建；生命周期 2-6 只发送 `goldabcd-noexe-log-event`。修改日志面板或筛选项时改生命周期 1 并提高其版本，不要把整套面板复制回 2-6。
+- 生命周期 5、6 使用各自独立配置键，不能合并到生命周期 1-4 的 `goldabcd_noexe_config_v1`。
+
 ## 检查命令
 
 ```bash
