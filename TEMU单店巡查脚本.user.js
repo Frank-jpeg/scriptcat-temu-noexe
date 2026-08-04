@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEMU单店巡查脚本
 // @namespace    https://local.temu.single.inspector
-// @version      1.9.11
+// @version      1.9.12
 // @description  单店铺 TEMU 巡查：抽检结果、JIT 逾期、合规中心、违规信息、VMI 未收货、价格申报、退货包裹、资金余额
 // @match        https://agentseller.temu.com/*
 // @match        https://seller.kuajingmaihuo.com/*
@@ -17,7 +17,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '1.9.11';
+  const SCRIPT_VERSION = '1.9.12';
   const APP_ID = '__temu_single_store_script_v8';
   const PANEL_ID = `${APP_ID}_panel`;
   const RESULT_DIALOG_ID = `${APP_ID}_result_dialog`;
@@ -714,6 +714,8 @@
       results: {},
       logs: [],
       error: '',
+      loginAttemptedAt: null,
+      loginAttemptedUrl: '',
       ruleConfig: {
         protectDiff: !!config.protectDiff,
         protectDiffLimit: Math.max(0, toFloat(config.protectDiffLimit, 1)),
@@ -1266,6 +1268,78 @@
     return location.href.startsWith(url);
   }
 
+  function loginControlContextText(element) {
+    if (!element) {
+      return '';
+    }
+    const texts = [];
+    const label = element.id
+      ? Array.from(document.querySelectorAll('label')).find((labelElement) => labelElement.htmlFor === element.id)
+      : null;
+    let current = element;
+    for (let level = 0; current && level < 3; level += 1, current = current.parentElement) {
+      texts.push(current.innerText || '');
+    }
+    if (label) {
+      texts.push(label.innerText || '');
+    }
+    return normalize(texts.join(' '));
+  }
+
+  function findLoginAgreementCheckbox() {
+    const checkboxes = Array.from(document.querySelectorAll('input[type="checkbox"]'))
+      .filter((element) => !element.matches('[data-check], [data-role]'));
+    const matched = checkboxes.find((element) => {
+      const context = loginControlContextText(element);
+      return context.includes('已阅读并同意')
+        || (context.includes('账号使用须知') && context.includes('隐私政策'));
+    });
+    return matched || checkboxes.find((element) => !element.disabled) || null;
+  }
+
+  function findLoginButton() {
+    const candidates = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"], a'))
+      .filter((element) => {
+        const text = element.matches('input[type="submit"]')
+          ? normalize(element.value)
+          : normalize(element.innerText);
+        return visible(element)
+          && text === '登录'
+          && !element.disabled
+          && element.getAttribute('aria-disabled') !== 'true';
+      });
+    candidates.sort((left, right) => {
+      const score = (element) => {
+        let value = 0;
+        if (element.tagName === 'BUTTON') {
+          value += 30;
+        } else if (element.matches('input[type="submit"]')) {
+          value += 25;
+        } else if (element.getAttribute('role') === 'button') {
+          value += 20;
+        }
+        const className = String(element.className || '').toLowerCase();
+        if (className.includes('login') || className.includes('submit')) {
+          value += 10;
+        }
+        if (className.includes('btn_danger')) {
+          value += 15;
+        }
+        const rect = element.getBoundingClientRect();
+        return value + Math.min(10, rect.width * rect.height / 10000);
+      };
+      return score(right) - score(left);
+    });
+    return candidates[0] || null;
+  }
+
+  function readLoginPageState() {
+    return {
+      agreementCheckbox: findLoginAgreementCheckbox(),
+      loginButton: findLoginButton(),
+    };
+  }
+
   function isLoginPageUrl(href = location.href) {
     const value = String(href || '');
     if (LOGIN_URL_PREFIXES.some((prefix) => value.startsWith(prefix))) {
@@ -1281,13 +1355,64 @@
   }
 
   function buildLoginStopMessage(state) {
-    if (isLoginPageUrl()) {
-      return `检测到登录页，巡查已暂停：${location.href}`;
-    }
     if (state && state.loginPrompt) {
       return '检测到登录态失效，巡查已暂停，请重新登录后再开始';
     }
     return '';
+  }
+
+  async function stopOnLoginFailure(jobId, reason) {
+    await appendJobLog('ERROR', reason);
+    await markJobStopped(reason);
+    await assertNotStopped(jobId);
+    throw stopError();
+  }
+
+  async function tryLoginFromPage(jobId, loginState) {
+    const job = await loadJob();
+    if (!job || job.status !== 'running' || job.id !== jobId) {
+      throw stopError();
+    }
+    if (job.loginAttemptedAt) {
+      const reason = `自动登录后仍停留在登录页，巡查已暂停，请检查账号、密码或验证码后重新开始：${location.href}`;
+      await stopOnLoginFailure(jobId, reason);
+    }
+    const controlDeadline = Date.now() + 5000;
+    while ((!loginState.agreementCheckbox || !loginState.loginButton) && Date.now() < controlDeadline) {
+      await checkedSleep(jobId, 250, 100);
+      if (!isLoginPageUrl()) {
+        return false;
+      }
+      loginState = readLoginPageState();
+    }
+    if (!loginState.agreementCheckbox || !loginState.loginButton) {
+      const reason = '检测到登录页，但未找到“已阅读并同意”勾选框或明确的“登录”按钮，请手动登录后重新开始';
+      await stopOnLoginFailure(jobId, reason);
+    }
+
+    job.loginAttemptedAt = Date.now();
+    job.loginAttemptedUrl = location.href;
+    job.currentMessage = '检测到登录页，正在尝试自动勾选协议并登录...';
+    await saveJob(job);
+    await appendJobLog('WARN', '检测到登录页，尝试勾选协议并点击登录');
+
+    if (!loginState.agreementCheckbox.checked) {
+      loginState.agreementCheckbox.click();
+      await sleep(300);
+    }
+    const loginButton = findLoginButton() || loginState.loginButton;
+    if (loginButton && !loginButton.disabled && loginButton.getAttribute('aria-disabled') !== 'true') {
+      loginButton.click();
+    } else {
+      const reason = '协议已勾选，但登录按钮不可用，请手动登录后重新开始';
+      await stopOnLoginFailure(jobId, reason);
+    }
+    await checkedSleep(jobId, 5000, 250);
+    if (isLoginPageUrl()) {
+      const reason = `自动登录后仍停留在登录页，巡查已暂停，请检查账号、密码或验证码后重新开始：${location.href}`;
+      await stopOnLoginFailure(jobId, reason);
+    }
+    return false;
   }
 
   async function navigateTo(url, label) {
@@ -1310,17 +1435,29 @@
       regionButtons,
       authButton,
       checkbox,
-      loginPrompt: body.includes('扫码登录') || body.includes('账号登录'),
+      loginPrompt: body.includes('扫码登录')
+        || body.includes('账号登录')
+        || body.includes('手机登录')
+        || body.includes('邮箱登录'),
     };
   }
 
   async function ensureAccessReady(jobId) {
     const state = readAccessState();
+    if (isLoginPageUrl()) {
+      return await tryLoginFromPage(jobId, readLoginPageState());
+    }
     const loginStopMessage = buildLoginStopMessage(state);
     if (loginStopMessage) {
       await appendJobLog('ERROR', loginStopMessage);
       await markJobStopped(loginStopMessage);
       throw stopError();
+    }
+    const currentJob = await loadJob();
+    if (currentJob && currentJob.loginAttemptedAt) {
+      delete currentJob.loginAttemptedAt;
+      delete currentJob.loginAttemptedUrl;
+      await saveJob(currentJob);
     }
     if (state.hasRegionPage && state.regionButtons.length) {
       await appendJobLog('WARN', '检测到地区入口页，自动进入商家中心');
