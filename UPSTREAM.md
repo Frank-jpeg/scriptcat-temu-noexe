@@ -1,10 +1,10 @@
 # 上游脚本对比
 
-本仓库的 5 个生命周期脚本 fork/改造自同事 TonyTonyYang 的脚本站，去掉了本地下载器依赖，改成单文件版。本文档记录上游现状和差异，方便以后同步。
+本仓库的 6 个生命周期脚本 fork/改造自同事 TonyTonyYang 的脚本站，去掉了本地下载器依赖，改成单文件版。本文档记录上游现状和差异，方便以后同步。
 
 **上游地址**：https://www.goldabcd.com/temu.html
 **脚本目录**：`https://www.goldabcd.com/scriptcat/<脚本名>.user.js`
-**对比时间**：2026-07-28
+**对比时间**：2026-08-04
 
 ---
 
@@ -20,9 +20,9 @@
 
 `public.js` 里有 `getSkey` / `postTemu` / `postLocal`，配置也从 `LOCAL_SERVER + "/getConfig"` 拉（`theName: "全局设置"` / `"阶梯核价设置"`）。所以上游脚本必须先跑那个下载器 EXE。
 
-本仓库版本把 `public.js` 内联，配置改成脚本内的可视化面板（`GM_getValue` / `GM_setValue`，键 `goldabcd_noexe_config_v1`），因此不需要下载器。这也是文件从 6~29 KB 涨到 93~130 KB 的原因。
+本仓库版本把 `public.js` 内联，配置改成脚本内的可视化面板（`GM_getValue` / `GM_setValue`），因此不需要下载器。生命周期 1-4 使用 `goldabcd_noexe_config_v1`，生命周期 5、6 分别使用独立配置键，模板不会互相覆盖。
 
-关键兼容点：`postTemu` 用 `headers: { "mallid": mallId }` 指定目标店铺，改全局变量 `mallId` 就能对不同店铺发请求，不用切换页面。上下游机制一致。
+关键兼容点：`postTemu` 用 `headers: { "mallid": mallId }` 指定目标店铺，不用切换页面。生命周期 6 为避免与生命周期 5 同页轮询时串店，每次请求显式传入自己的 `mallId`，不改写 `window.mallId`。
 
 ---
 
@@ -119,7 +119,7 @@ visage-agent-seller/product/edit/task/reply
 | 2026.0621.1 | 我的备货单-获取订单数据 | |
 | 2026.0620.1 | 营销活动(全部)-自动报名-全托管 | |
 | 2026.0617.1 | 商品列表-上架商品-多并发 | 全托 |
-| 2026.0612.2 | 合规中心-实拍图-自动版 | 全托+半托 |
+| 2026.0612.2 | **合规中心-实拍图-自动版** | 全托+半托，已 fork 为 `temulife6-自动实拍图.user.js`，仅处理待传图状态 1 |
 | 2026.0612.1 | **上新生命周期-3-增加库存** | 全托+半托，已 fork |
 | 2026.0612.1 | **上新生命周期-2-开通JIT** | 已 fork |
 | 2026.0611.3 | **上新生命周期-1-提交核价** | 全托+半托，已 fork |

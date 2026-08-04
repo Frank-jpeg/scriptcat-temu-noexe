@@ -11,6 +11,7 @@ TEMU ScriptCat 自改版脚本，去掉本地下载器依赖，并支持 GitHub 
 - 3 增加库存: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temu-life-3-stock.user.js
 - 4 确认商品信息: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temu-life-4-confirm.user.js
 - 5 自动商品合规: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temulife5-%E8%87%AA%E5%8A%A8%E5%95%86%E5%93%81%E5%90%88%E8%A7%84.user.js
+- 6 自动实拍图: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temulife6-%E8%87%AA%E5%8A%A8%E5%AE%9E%E6%8B%8D%E5%9B%BE.user.js
 - TEMU商品信息抓取下载: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/TEMU%E5%95%86%E5%93%81%E4%BF%A1%E6%81%AF%E6%8A%93%E5%8F%96%E4%B8%8B%E8%BD%BD.user.js
 - TEMU商品列表导出: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/TEMU%E5%95%86%E5%93%81%E5%88%97%E8%A1%A8%E5%AF%BC%E5%87%BA.user.js
 - TEMU单店巡查脚本: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/TEMU%E5%8D%95%E5%BA%97%E5%B7%A1%E6%9F%A5%E8%84%9A%E6%9C%AC.user.js
@@ -52,7 +53,7 @@ git@github.com:Frank-jpeg/scriptcat-temu-noexe.git
 
 | 脚本 | 格式 | 示例 |
 |---|---|---|
-| `temu-life-*` 生命周期脚本 | 日期式（继承自上游） | `2026.0704.2` |
+| `temu-life-*` / `temulife*` 生命周期脚本 | 日期式（继承自上游） | `2026.0704.2` |
 | 其余自写脚本 | 语义式 | `4.30.0`、`8.5.1`、`1.9.7` |
 
 ScriptCat 靠比较 `@version` 大小决定是否更新。若把日期式改成语义式（如 `2026.0704.2` → `1.0.0`），会被判定为**降级**，不仅当次不更新，之后也再升不上去（除非版本号始终大于 `2026.x`）。
@@ -61,7 +62,7 @@ ScriptCat 靠比较 `@version` 大小决定是否更新。若把日期式改成�
 
 ## 上游对比
 
-5 个生命周期脚本 fork/改造自 https://www.goldabcd.com/temu.html ，去掉了本地下载器依赖。上游现状、差异清单和重新对比的方法见 [UPSTREAM.md](UPSTREAM.md)。
+6 个生命周期脚本 fork/改造自 https://www.goldabcd.com/temu.html ，去掉了本地下载器依赖。上游现状、差异清单和重新对比的方法见 [UPSTREAM.md](UPSTREAM.md)。
 
 注意本仓库的 `@version` 与上游日期无对应关系，判断是否落后要看代码，不能看版本号。
 
@@ -74,6 +75,8 @@ ScriptCat 靠比较 `@version` 大小决定是否更新。若把日期式改成�
 `合规中心-实拍图-自改版` 不再依赖 `127.0.0.1:3000`，也不需要客户手写 JSON。
 
 `temulife5-自动商品合规.user.js` 不再依赖 `127.0.0.1:3000`。首次安装默认停用，打开 TEMU 商品选择页后先在第 5 个按钮里保存当前店铺“合规参考模板SPU”，再点“启用自动合规”。启用后脚本每 15 分钟轮询一个店铺，按模板SPU复制商品合规信息并提交。
+
+`temulife6-自动实拍图.user.js` 同样默认停用。先在第 6 个按钮里保存当前店铺已有实拍图的模板SPU，再启用自动实拍图。脚本只扫描状态 `1`（待传图）的商品，按模板SPU和目标商品的 TEMU `cat_id` 匹配，每 15 分钟轮询一个店铺；状态 `4`（图中标签有异常）不会进入队列。
 
 客户操作流程：打开 TEMU 实拍图页面后点左侧橙色“实拍图”抽屉按钮，选择图片来源，再在“目标SPU”里一行一个粘贴要提交的 SPU，最后点“提交这些SPU”。
 

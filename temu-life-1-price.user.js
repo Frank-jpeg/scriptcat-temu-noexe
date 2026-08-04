@@ -4,7 +4,7 @@
 // @description  提交核价（自改版，无需下载器EXE，带可视化配置、接口日志和业务明细）
 // @author       TonyTonyYang
 // @match        https://agentseller.temu.com/newon/product-select*
-// @version      2026.0803.1
+// @version      2026.0804.1
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
@@ -15,7 +15,7 @@
 
 const NOEXE_STORAGE_KEY = "goldabcd_noexe_config_v1";
 const NOEXE_STORAGE_BACKUP_KEY = "goldabcd_noexe_config_v1_local_backup";
-const NOEXE_UI_VERSION = "2026.0803.1";
+const NOEXE_UI_VERSION = "2026.0804.1";
 const NOEXE_DEFAULT_CONFIG = {
     "version": 1,
     "malls": [],
@@ -41,7 +41,8 @@ const NOEXE_LOG_SCRIPT_FILTERS = [
     { key: "jit", label: "2 开通JIT", match: "上新生命周期-2-开通JIT" },
     { key: "stock", label: "3 增加库存", match: "上新生命周期-3-增加库存" },
     { key: "confirm", label: "4 确认商品信息", match: "上新生命周期-4-确认商品信息" },
-    { key: "compliance", label: "商品合规", match: "合规中心-商品合规" }
+    { key: "compliance", label: "5 自动商品合规", match: "合规中心-商品合规" },
+    { key: "realPhoto", label: "6 自动实拍图", match: "上新生命周期-6-自动实拍图" }
 ];
 const NOEXE_LOG_KEEP_PER_SCRIPT = 1000;
 const NOEXE_LOG_RENDER_LIMIT = 120;
