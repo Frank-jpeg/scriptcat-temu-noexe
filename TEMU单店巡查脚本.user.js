@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEMU单店巡查脚本
 // @namespace    https://local.temu.single.inspector
-// @version      1.9.12
+// @version      1.9.13
 // @description  单店铺 TEMU 巡查：抽检结果、JIT 逾期、合规中心、违规信息、VMI 未收货、价格申报、退货包裹、资金余额
 // @match        https://agentseller.temu.com/*
 // @match        https://seller.kuajingmaihuo.com/*
@@ -17,7 +17,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '1.9.12';
+  const SCRIPT_VERSION = '1.9.13';
   const APP_ID = '__temu_single_store_script_v8';
   const PANEL_ID = `${APP_ID}_panel`;
   const RESULT_DIALOG_ID = `${APP_ID}_result_dialog`;
@@ -1340,6 +1340,34 @@
     };
   }
 
+  function findPhoneLoginTab() {
+    const candidates = Array.from(document.querySelectorAll('button, [role="tab"], [role="button"], a, div, span'))
+      .filter((element) => visible(element) && normalize(element.innerText) === '手机号登录');
+    candidates.sort((left, right) => {
+      const score = (element) => {
+        let value = 0;
+        if (element.getAttribute('role') === 'tab') {
+          value += 35;
+        } else if (element.tagName === 'BUTTON') {
+          value += 30;
+        } else if (element.getAttribute('role') === 'button') {
+          value += 25;
+        }
+        const className = String(element.className || '').toLowerCase();
+        if (className.includes('tab') || className.includes('login') || className.includes('phone')) {
+          value += 10;
+        }
+        if (element.hasAttribute('aria-selected')) {
+          value += 5;
+        }
+        const rect = element.getBoundingClientRect();
+        return value + Math.min(8, rect.width * rect.height / 10000);
+      };
+      return score(right) - score(left);
+    });
+    return candidates[0] || null;
+  }
+
   function isLoginPageUrl(href = location.href) {
     const value = String(href || '');
     if (LOGIN_URL_PREFIXES.some((prefix) => value.startsWith(prefix))) {
@@ -1376,6 +1404,16 @@
     if (job.loginAttemptedAt) {
       const reason = `自动登录后仍停留在登录页，巡查已暂停，请检查账号、密码或验证码后重新开始：${location.href}`;
       await stopOnLoginFailure(jobId, reason);
+    }
+    if (!loginState.agreementCheckbox && !loginState.loginButton) {
+      const phoneLoginTab = findPhoneLoginTab();
+      if (phoneLoginTab) {
+        await updateJobMessage('检测到扫码登录页，正在切换到手机号登录...');
+        await appendJobLog('WARN', '检测到扫码登录页，自动切换到手机号登录');
+        phoneLoginTab.click();
+        await checkedSleep(jobId, 600, 100);
+        loginState = readLoginPageState();
+      }
     }
     const controlDeadline = Date.now() + 5000;
     while ((!loginState.agreementCheckbox || !loginState.loginButton) && Date.now() < controlDeadline) {
