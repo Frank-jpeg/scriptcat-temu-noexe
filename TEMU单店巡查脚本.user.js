@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEMU单店巡查脚本
 // @namespace    https://local.temu.single.inspector
-// @version      1.9.22
+// @version      1.9.23
 // @description  单店铺 TEMU 巡查：抽检结果、JIT 逾期、合规中心、违规信息、VMI 未收货、价格申报、退货包裹、资金余额
 // @match        https://agentseller.temu.com/*
 // @match        https://seller.kuajingmaihuo.com/*
@@ -17,7 +17,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '1.9.22';
+  const SCRIPT_VERSION = '1.9.23';
   const APP_ID = '__temu_single_store_script_v8';
   const PANEL_ID = `${APP_ID}_panel`;
   const RESULT_DIALOG_ID = `${APP_ID}_result_dialog`;
@@ -4016,14 +4016,6 @@
         <div data-role="meta" style="font-size:10px;opacity:.78;flex:0 0 auto;">ScriptCat</div>
       </div>
       <div id="${APP_ID}_body" style="padding:10px;">
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
-          <button data-role="start" style="${buttonStyle('#0f766e')}">开始巡查</button>
-          <button data-role="start-price-rule" style="${buttonStyle('#2563eb')}">只跑价格申报</button>
-          <button data-role="stop" style="${buttonStyle('#b45309')}">停止</button>
-          <button data-role="copy" style="${buttonStyle('#374151')}">复制摘要</button>
-          <button data-role="clear" style="${buttonStyle('#4b5563')}">清空结果</button>
-        </div>
-
         <div data-role="decision-card" style="margin-bottom:8px;padding:8px 9px;border:1px solid #334155;border-radius:9px;background:#17202a;">
           <div data-role="decision-title" style="font-weight:700;font-size:16px;line-height:1.2;color:#cbd5e1;">待命</div>
           <div data-role="decision-detail" style="margin-top:4px;font-size:10.5px;line-height:1.45;color:#94a3b8;white-space:pre-wrap;">还没开始巡查</div>
@@ -4081,6 +4073,14 @@
             </div>
           </div>
         </details>
+
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
+          <button data-role="start" style="${buttonStyle('#0f766e')}">开始巡查</button>
+          <button data-role="start-price-rule" style="${buttonStyle('#2563eb')}">只跑价格申报</button>
+          <button data-role="stop" style="${buttonStyle('#b45309')}">停止</button>
+          <button data-role="copy" style="${buttonStyle('#374151')}">复制摘要</button>
+          <button data-role="clear" style="${buttonStyle('#4b5563')}">清空结果</button>
+        </div>
 
         <div style="margin-bottom:7px;padding:7px;border-radius:8px;background:#0f1317;border:1px solid #25303a;">
           <div style="font-weight:600;margin-bottom:3px;">当前状态</div>
