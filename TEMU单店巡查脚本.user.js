@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEMU单店巡查脚本
 // @namespace    https://local.temu.single.inspector
-// @version      1.9.23
+// @version      1.9.24
 // @description  单店铺 TEMU 巡查：抽检结果、JIT 逾期、合规中心、违规信息、VMI 未收货、价格申报、退货包裹、资金余额
 // @match        https://agentseller.temu.com/*
 // @match        https://seller.kuajingmaihuo.com/*
@@ -17,7 +17,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '1.9.23';
+  const SCRIPT_VERSION = '1.9.24';
   const APP_ID = '__temu_single_store_script_v8';
   const PANEL_ID = `${APP_ID}_panel`;
   const RESULT_DIALOG_ID = `${APP_ID}_result_dialog`;
@@ -25,6 +25,7 @@
   const JOB_KEY = `${APP_ID}_job`;
   const RECENT_DAYS = 2;
   const SHIPPING_STALE_DAYS = 6;
+  const SHIPPING_MAX_DAYS = 15;
   const WITHDRAW_ALERT_THRESHOLD = 2000;
   const ARRIVAL_OVERDUE_RECENT_DAYS = 4;
   const LOW_DECLARED_PRICE_THRESHOLD = 10;
@@ -61,7 +62,7 @@
     { key: 'urgent', label: '检查JIT是否逾期', low: false },
     { key: 'urgent_declared_price', label: '检查待发货低申报价', low: false },
     { key: 'govern', label: '合规中心', low: false },
-    { key: 'shipping', label: `检查VMI超${SHIPPING_STALE_DAYS}天未收货`, low: false },
+    { key: 'shipping', label: `检查VMI${SHIPPING_STALE_DAYS}-${SHIPPING_MAX_DAYS}天未收货`, low: false },
     { key: 'violation', label: '检查违规信息待处理', low: false },
     { key: 'limited', label: '检查店铺限制记录', low: false },
     { key: 'price_rule', label: '价格申报自动助手', low: false },
@@ -232,6 +233,15 @@
       return false;
     }
     return Date.now() - target.getTime() >= days * 24 * 60 * 60 * 1000;
+  }
+
+  function isShippingAgeInRange(target) {
+    if (!target) {
+      return false;
+    }
+    const ageMs = Date.now() - target.getTime();
+    return ageMs >= SHIPPING_STALE_DAYS * 24 * 60 * 60 * 1000
+      && ageMs <= SHIPPING_MAX_DAYS * 24 * 60 * 60 * 1000;
   }
 
   function violationNeedsManual(progress) {
@@ -759,7 +769,7 @@
       reasons.push(`TRO${toInt(results.govern.troCount)}`);
     }
     if (enabledChecks.shipping && toInt(results.shipping && results.shipping.staleCount) > 0) {
-      reasons.push(`VMI超${SHIPPING_STALE_DAYS}天未收货${toInt(results.shipping.staleCount)}`);
+      reasons.push(`VMI${SHIPPING_STALE_DAYS}-${SHIPPING_MAX_DAYS}天未收货${toInt(results.shipping.staleCount)}`);
     }
     if (enabledChecks.violation && toInt(results.violation && results.violation.pendingCount) > 0) {
       reasons.push(`违规信息待处理${toInt(results.violation.pendingCount)}条`);
@@ -860,7 +870,7 @@
       const staleCount = toInt(results.shipping.staleCount);
       items.push({
         key: 'shipping',
-        label: `VMI超${SHIPPING_STALE_DAYS}天未收货`,
+        label: `VMI${SHIPPING_STALE_DAYS}-${SHIPPING_MAX_DAYS}天未收货`,
         manual: staleCount > 0,
         text: `${staleCount} 单`,
       });
@@ -2515,7 +2525,7 @@
         status,
         shipTimeText: shipTime ? shipTime.toISOString().slice(0, 19).replace('T', ' ') : '',
         receiveTimeText: receiveTime ? receiveTime.toISOString().slice(0, 19).replace('T', ' ') : '',
-        isStale: isOlderThanDays(shipTime, SHIPPING_STALE_DAYS),
+        isStale: isShippingAgeInRange(shipTime),
       };
     });
     return {
@@ -3423,7 +3433,7 @@
       await updateJobMessage(`VMI 页已打开，等待表格渲染：${state.body.slice(0, 80)}`);
       await checkedSleep(job.id, 1500);
     }
-    throw new Error(`等待VMI超${SHIPPING_STALE_DAYS}天未收货页超时`);
+    throw new Error(`等待VMI${SHIPPING_STALE_DAYS}-${SHIPPING_MAX_DAYS}天未收货页超时`);
   }
 
   async function stepViolation(job) {
