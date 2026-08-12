@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEMU单店巡查脚本
 // @namespace    https://local.temu.single.inspector
-// @version      1.9.24
+// @version      1.9.25
 // @description  单店铺 TEMU 巡查：抽检结果、JIT 逾期、合规中心、违规信息、VMI 未收货、价格申报、退货包裹、资金余额
 // @match        https://agentseller.temu.com/*
 // @match        https://seller.kuajingmaihuo.com/*
@@ -17,7 +17,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '1.9.24';
+  const SCRIPT_VERSION = '1.9.25';
   const APP_ID = '__temu_single_store_script_v8';
   const PANEL_ID = `${APP_ID}_panel`;
   const RESULT_DIALOG_ID = `${APP_ID}_result_dialog`;
@@ -1390,83 +1390,6 @@
     return candidates[0] || null;
   }
 
-  function findLoginCredentialInputs(loginMethod) {
-    const inputs = Array.from(document.querySelectorAll('input'))
-      .filter((element) => visible(element)
-        && !element.disabled
-        && !element.closest(`#${PANEL_ID}`));
-    const passwordInput = inputs.find((element) => String(element.type || '').toLowerCase() === 'password') || null;
-    const accountCandidates = inputs.filter((element) => {
-      const type = String(element.type || 'text').toLowerCase();
-      return !['password', 'hidden', 'checkbox', 'radio', 'submit', 'button'].includes(type);
-    });
-    const scoreAccountInput = (element) => {
-      const type = String(element.type || 'text').toLowerCase();
-      const hints = normalize([
-        element.name,
-        element.id,
-        element.placeholder,
-        element.autocomplete,
-        element.getAttribute('aria-label'),
-      ].join(' ')).toLowerCase();
-      const value = String(element.value || '').trim();
-      let score = 0;
-      if (loginMethod === 'email') {
-        if (type === 'email') score += 50;
-        if (hints.includes('email') || hints.includes('邮箱')) score += 35;
-        if (value.includes('@')) score += 45;
-      } else {
-        if (type === 'tel') score += 50;
-        if (hints.includes('phone') || hints.includes('mobile') || hints.includes('手机号')) score += 35;
-      }
-      if (hints.includes('account') || hints.includes('user') || hints.includes('账号')) score += 10;
-      return score;
-    };
-    accountCandidates.sort((left, right) => scoreAccountInput(right) - scoreAccountInput(left));
-    return {
-      accountInput: accountCandidates[0] || null,
-      passwordInput,
-    };
-  }
-
-  function syncAutofilledLoginInput(element) {
-    if (!element) {
-      return;
-    }
-    element.dispatchEvent(new Event('input', { bubbles: true }));
-    element.dispatchEvent(new Event('change', { bubbles: true }));
-  }
-
-  async function waitForLoginCredentials(jobId, loginMethod, loginMethodLabel) {
-    const deadline = Date.now() + 8000;
-    let readySince = 0;
-    let readyInputs = null;
-    await updateJobMessage(`已切换到${loginMethodLabel}，正在等待浏览器自动填充账号和密码...`);
-    while (Date.now() < deadline) {
-      const inputs = findLoginCredentialInputs(loginMethod);
-      const accountValue = String(inputs.accountInput && inputs.accountInput.value || '').trim();
-      const passwordValue = String(inputs.passwordInput && inputs.passwordInput.value || '');
-      const accountReady = loginMethod === 'email' ? accountValue.includes('@') : accountValue.length > 0;
-      if (accountReady && passwordValue.length > 0) {
-        if (!readySince) {
-          readySince = Date.now();
-        }
-        readyInputs = inputs;
-        if (Date.now() - readySince >= 800) {
-          syncAutofilledLoginInput(readyInputs.accountInput);
-          syncAutofilledLoginInput(readyInputs.passwordInput);
-          await checkedSleep(jobId, 300, 100);
-          return true;
-        }
-      } else {
-        readySince = 0;
-        readyInputs = null;
-      }
-      await checkedSleep(jobId, 200, 100);
-    }
-    return false;
-  }
-
   function isLoginPageUrl(href = location.href) {
     const value = String(href || '');
     if (LOGIN_URL_PREFIXES.some((prefix) => value.startsWith(prefix))) {
@@ -1602,14 +1525,9 @@
       const reason = '检测到登录页，但未找到“已阅读并同意”勾选框或明确的“登录”按钮，请手动登录后重新开始';
       await stopOnLoginFailure(jobId, reason);
     }
-    if (loginMethodTab) {
-      const credentialsReady = await waitForLoginCredentials(jobId, loginMethod, loginMethodLabel);
-      if (!credentialsReady) {
-        const reason = `已切换到${loginMethodLabel}，但等待 8 秒后账号或密码仍未自动填充，巡查已暂停，请检查浏览器保存的登录信息`;
-        await stopOnLoginFailure(jobId, reason);
-      }
-      loginState = readLoginPageState();
-    }
+    await updateJobMessage(`已进入${loginMethodLabel}，等待 3 秒后自动登录...`);
+    await checkedSleep(jobId, 3000, 100);
+    loginState = readLoginPageState();
 
     job.loginAttemptedAt = Date.now();
     job.loginAttemptedUrl = location.href;
@@ -1628,12 +1546,15 @@
       const reason = '协议已勾选，但登录按钮不可用，请手动登录后重新开始';
       await stopOnLoginFailure(jobId, reason);
     }
-    await checkedSleep(jobId, 5000, 250);
-    if (isLoginPageUrl()) {
-      const reason = `自动登录后仍停留在登录页，巡查已暂停，请检查账号、密码或验证码后重新开始：${location.href}`;
-      await stopOnLoginFailure(jobId, reason);
+    const navigationDeadline = Date.now() + 10000;
+    while (Date.now() < navigationDeadline) {
+      await checkedSleep(jobId, 250, 100);
+      if (!isLoginPageUrl()) {
+        return false;
+      }
     }
-    return false;
+    const reason = `点击登录后 10 秒仍停留在登录页，巡查已暂停，请检查账号、密码或验证码后重新开始：${location.href}`;
+    await stopOnLoginFailure(jobId, reason);
   }
 
   async function navigateTo(url, label) {
