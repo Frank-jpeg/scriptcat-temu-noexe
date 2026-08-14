@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Temu 商品信息抓取下载 GitHub更新版
 // @namespace    https://bbs.tampermonkey.net.cn/
-// @version      4.30.3
+// @version      4.30.4
 // @description  批量抓取 Temu 商品（详情页直接识别店铺和抓取状态，支持多币种价格/销量筛选、记住上次筛选值、生成销量TXT统计、中文/英文销量识别、JPG/PNG可选、原始字节下载、自动跳过推荐区、并发下载、自定义间隔）
 // @author       Gemini
 // @match        https://www.temu.com/*
@@ -20,7 +20,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '4.30.3';
+    const SCRIPT_VERSION = '4.30.4';
     const STORAGE_KEY = 'TEMU_SCRAPED_SHOPS_STORAGE';
     const IMAGE_FORMAT_KEY = 'TEMU_IMAGE_FORMAT';
     const MIN_SALES_KEY = 'TEMU_MIN_SALES';
@@ -76,8 +76,26 @@
         return '';
     }
 
+    function getMallPageShopName() {
+        if (location.pathname.replace(/\/+$/, '') !== '/mall.html') return '';
+
+        const headings = document.querySelectorAll('h1.PX7EseE2._2DshZJ_y, h1');
+        for (const heading of headings) {
+            const text = (heading.innerText || heading.textContent || '').split('\n')[0].trim();
+            if (text && text.length < 60 &&
+                !['Home', 'Items', 'Reviews', '首页', '所有商品', '评价'].includes(text)) {
+                return text;
+            }
+        }
+
+        return '';
+    }
+
     // 获取店铺名称
     function getShopName() {
+        const mallPageShopName = getMallPageShopName();
+        if (mallPageShopName) return mallPageShopName;
+
         const productDetailShopName = getProductDetailShopName();
         if (productDetailShopName) return productDetailShopName;
 
