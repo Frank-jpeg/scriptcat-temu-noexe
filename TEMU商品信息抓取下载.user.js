@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Temu 商品信息抓取下载 GitHub更新版
 // @namespace    https://bbs.tampermonkey.net.cn/
-// @version      4.30.2
+// @version      4.30.3
 // @description  批量抓取 Temu 商品（详情页直接识别店铺和抓取状态，支持多币种价格/销量筛选、记住上次筛选值、生成销量TXT统计、中文/英文销量识别、JPG/PNG可选、原始字节下载、自动跳过推荐区、并发下载、自定义间隔）
 // @author       Gemini
 // @match        https://www.temu.com/*
@@ -20,7 +20,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '4.30.2';
+    const SCRIPT_VERSION = '4.30.3';
     const STORAGE_KEY = 'TEMU_SCRAPED_SHOPS_STORAGE';
     const IMAGE_FORMAT_KEY = 'TEMU_IMAGE_FORMAT';
     const MIN_SALES_KEY = 'TEMU_MIN_SALES';
@@ -548,7 +548,7 @@
         toast.id = DUPLICATE_TOAST_ID;
         toast.style.cssText = [
             'position: fixed',
-            'top: 70px',
+            'top: 50%',
             'left: 50%',
             'z-index: 10005',
             'width: 620px',
@@ -564,7 +564,7 @@
             'line-height: 1.55',
             'color: #333',
             'opacity: 0',
-            'transform: translate(-50%, -10px)',
+            'transform: translate(-50%, calc(-50% - 10px))',
             'transition: opacity 0.2s ease, transform 0.2s ease',
             'pointer-events: auto'
         ].join(';');
@@ -585,7 +585,7 @@
         const hideToast = () => {
             if (duplicateToastTimer) clearTimeout(duplicateToastTimer);
             toast.style.opacity = '0';
-            toast.style.transform = 'translate(-50%, -10px)';
+            toast.style.transform = 'translate(-50%, calc(-50% - 10px))';
             setTimeout(() => {
                 if (toast.parentNode) toast.parentNode.removeChild(toast);
             }, 220);
@@ -599,7 +599,7 @@
 
         requestAnimationFrame(() => {
             toast.style.opacity = '1';
-            toast.style.transform = 'translate(-50%, 0)';
+            toast.style.transform = 'translate(-50%, -50%)';
         });
         duplicateToastTimer = setTimeout(hideToast, 4500);
     }
