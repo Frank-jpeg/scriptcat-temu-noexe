@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Temu 商品信息抓取下载 GitHub更新版
 // @namespace    https://bbs.tampermonkey.net.cn/
-// @version      4.30.0
-// @description  批量抓取 Temu 商品（支持多币种价格/销量筛选、记住上次筛选值、生成销量TXT统计、中文/英文销量识别、JPG/PNG可选、原始字节下载、自动跳过推荐区、并发下载、自定义间隔）
+// @version      4.30.1
+// @description  批量抓取 Temu 商品（详情页直接识别店铺和抓取状态，支持多币种价格/销量筛选、记住上次筛选值、生成销量TXT统计、中文/英文销量识别、JPG/PNG可选、原始字节下载、自动跳过推荐区、并发下载、自定义间隔）
 // @author       Gemini
 // @match        https://www.temu.com/*
 // @run-at       document-idle
@@ -20,7 +20,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '4.30.0';
+    const SCRIPT_VERSION = '4.30.1';
     const STORAGE_KEY = 'TEMU_SCRAPED_SHOPS_STORAGE';
     const IMAGE_FORMAT_KEY = 'TEMU_IMAGE_FORMAT';
     const MIN_SALES_KEY = 'TEMU_MIN_SALES';
@@ -41,16 +41,52 @@
         token: ''
     };
 
+    function getProductDetailShopName() {
+        const normalizeText = value => String(value || '').replace(/\s+/g, ' ').trim();
+        const mallLinks = Array.from(document.querySelectorAll('a[href*="/mall.html"]')).filter(link => {
+            try {
+                return new URL(link.href, location.href).pathname.replace(/\/+$/, '') === '/mall.html';
+            } catch (error) {
+                return false;
+            }
+        });
+
+        for (const link of mallLinks) {
+            let card = link;
+            for (let depth = 0; depth < 10 && card; depth++, card = card.parentElement) {
+                const followerNode = card.querySelector('[aria-label*="粉丝"], [aria-label*="Followers" i]');
+                const soldNode = card.querySelector('[aria-label*="已售"], [aria-label*="sold" i]');
+                if (!followerNode || !soldNode) continue;
+
+                const labelledShop = Array.from(card.querySelectorAll('[role="link"][aria-label]')).find(element => {
+                    const label = normalizeText(element.getAttribute('aria-label'));
+                    return label && label.length < 60 &&
+                        !/^全部商品|^all (?:items|products)/i.test(label);
+                });
+                if (labelledShop) return normalizeText(labelledShop.getAttribute('aria-label'));
+
+                const shopImage = Array.from(card.querySelectorAll('img[alt]')).find(image => {
+                    const alt = normalizeText(image.getAttribute('alt'));
+                    return alt && alt.length < 60;
+                });
+                if (shopImage) return normalizeText(shopImage.getAttribute('alt'));
+            }
+        }
+
+        return '';
+    }
+
     // 获取店铺名称
     function getShopName() {
+        const productDetailShopName = getProductDetailShopName();
+        if (productDetailShopName) return productDetailShopName;
+
         const selectors = [
             'h1.PX7EseE2._2DshZJ_y',
             'h1[class*="shopName"]',
-            'h1[class*="Title"]',
             '.shop-header h1',
             '.shop-name-title',
-            'div[class*="shop-name"]',
-            'h1'
+            'div[class*="shop-name"]'
         ];
 
         for (let s of selectors) {
@@ -501,12 +537,13 @@
     let lastDuplicateToastShop = '';
     let duplicateToastTimer = null;
 
-    function showDuplicateShopToast(shopName) {
+    function showDuplicateShopToast(shopName, isScraped = true) {
         if (!document.body) return;
         const oldToast = document.getElementById(DUPLICATE_TOAST_ID);
         if (oldToast) oldToast.remove();
         if (duplicateToastTimer) clearTimeout(duplicateToastTimer);
 
+        const accentColor = isScraped ? '#ff4d4f' : '#16a34a';
         const toast = document.createElement('div');
         toast.id = DUPLICATE_TOAST_ID;
         toast.style.cssText = [
@@ -517,8 +554,8 @@
             'width: 360px',
             'max-width: calc(100vw - 40px)',
             'background: rgba(255,255,255,0.98)',
-            'border: 1px solid rgba(255,77,79,0.22)',
-            'border-left: 6px solid #ff4d4f',
+            `border: 1px solid ${isScraped ? 'rgba(255,77,79,0.22)' : 'rgba(22,163,74,0.22)'}`,
+            `border-left: 6px solid ${accentColor}`,
             'border-radius: 10px',
             'box-shadow: 0 12px 32px rgba(0,0,0,0.18)',
             'padding: 16px 44px 16px 18px',
@@ -533,8 +570,8 @@
         ].join(';');
 
         const title = document.createElement('div');
-        title.textContent = '这个店铺之前抓取过';
-        title.style.cssText = 'font-weight: bold; color: #ff4d4f; margin-bottom: 5px; font-size: 16px;';
+        title.textContent = isScraped ? '这个店铺之前抓取过' : '这个店铺还没有抓取';
+        title.style.cssText = `font-weight: bold; color: ${accentColor}; margin-bottom: 5px; font-size: 16px;`;
 
         const detail = document.createElement('div');
         detail.textContent = shopName;
@@ -570,21 +607,34 @@
     function checkDuplicateShopToast() {
         const shopName = safeGetShopName();
         const shopKey = normalizeShopNameForCompare(shopName);
-        if (!isScrapedShopName(shopName) || shopKey === lastDuplicateToastShop) return;
+        if (!shopKey || shopKey === normalizeShopNameForCompare('未知店铺') || shopKey === lastDuplicateToastShop) return;
+        const isScraped = isScrapedShopName(shopName);
         lastDuplicateToastShop = shopKey;
-        showDuplicateShopToast(shopName);
+        showDuplicateShopToast(shopName, isScraped);
+        updateStatusText(isScraped ? '该店铺之前已抓取' : '该店铺尚未抓取');
     }
 
     function startDuplicateShopWatcher() {
         let lastUrl = location.href;
-        setTimeout(checkDuplicateShopToast, 1200);
+        let checkTimer = null;
+        const scheduleCheck = () => {
+            if (checkTimer) clearTimeout(checkTimer);
+            checkTimer = setTimeout(checkDuplicateShopToast, 80);
+        };
+
+        const observer = new MutationObserver(scheduleCheck);
+        if (document.body) observer.observe(document.body, { childList: true, subtree: true });
+        scheduleCheck();
+
         setInterval(() => {
             if (location.href !== lastUrl) {
                 lastUrl = location.href;
                 lastDuplicateToastShop = '';
+                scheduleCheck();
+                return;
             }
             checkDuplicateShopToast();
-        }, 1500);
+        }, 1000);
     }
 
     function appendPanelWhenReady() {
