@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Temu 商品信息抓取下载 GitHub更新版
 // @namespace    https://bbs.tampermonkey.net.cn/
-// @version      4.30.1
+// @version      4.30.2
 // @description  批量抓取 Temu 商品（详情页直接识别店铺和抓取状态，支持多币种价格/销量筛选、记住上次筛选值、生成销量TXT统计、中文/英文销量识别、JPG/PNG可选、原始字节下载、自动跳过推荐区、并发下载、自定义间隔）
 // @author       Gemini
 // @match        https://www.temu.com/*
@@ -20,7 +20,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '4.30.1';
+    const SCRIPT_VERSION = '4.30.2';
     const STORAGE_KEY = 'TEMU_SCRAPED_SHOPS_STORAGE';
     const IMAGE_FORMAT_KEY = 'TEMU_IMAGE_FORMAT';
     const MIN_SALES_KEY = 'TEMU_MIN_SALES';
@@ -548,19 +548,19 @@
         toast.id = DUPLICATE_TOAST_ID;
         toast.style.cssText = [
             'position: fixed',
-            'top: 90px',
+            'top: 70px',
             'left: 50%',
             'z-index: 10005',
-            'width: 360px',
-            'max-width: calc(100vw - 40px)',
+            'width: 620px',
+            'max-width: calc(100vw - 32px)',
             'background: rgba(255,255,255,0.98)',
             `border: 1px solid ${isScraped ? 'rgba(255,77,79,0.22)' : 'rgba(22,163,74,0.22)'}`,
-            `border-left: 6px solid ${accentColor}`,
-            'border-radius: 10px',
-            'box-shadow: 0 12px 32px rgba(0,0,0,0.18)',
-            'padding: 16px 44px 16px 18px',
+            `border-left: 10px solid ${accentColor}`,
+            'border-radius: 12px',
+            'box-shadow: 0 18px 48px rgba(0,0,0,0.24)',
+            'padding: 28px 68px 28px 30px',
             'font-family: sans-serif',
-            'font-size: 15px',
+            'font-size: 24px',
             'line-height: 1.55',
             'color: #333',
             'opacity: 0',
@@ -571,16 +571,16 @@
 
         const title = document.createElement('div');
         title.textContent = isScraped ? '这个店铺之前抓取过' : '这个店铺还没有抓取';
-        title.style.cssText = `font-weight: bold; color: ${accentColor}; margin-bottom: 5px; font-size: 16px;`;
+        title.style.cssText = `font-weight: bold; color: ${accentColor}; margin-bottom: 10px; font-size: 32px; line-height: 1.3;`;
 
         const detail = document.createElement('div');
         detail.textContent = shopName;
-        detail.style.cssText = 'color: #555; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
+        detail.style.cssText = 'color: #444; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 24px; font-weight: 600;';
 
         const closeBtn = document.createElement('button');
         closeBtn.type = 'button';
         closeBtn.textContent = '×';
-        closeBtn.style.cssText = 'position:absolute; top:9px; right:12px; border:none; background:transparent; color:#999; font-size:22px; line-height:22px; cursor:pointer; padding:0;';
+        closeBtn.style.cssText = 'position:absolute; top:14px; right:18px; border:none; background:transparent; color:#888; font-size:36px; line-height:36px; cursor:pointer; padding:0;';
 
         const hideToast = () => {
             if (duplicateToastTimer) clearTimeout(duplicateToastTimer);
