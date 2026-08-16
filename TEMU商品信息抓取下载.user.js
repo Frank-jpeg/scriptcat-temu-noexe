@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Temu 商品信息抓取下载 GitHub更新版
 // @namespace    https://bbs.tampermonkey.net.cn/
-// @version      4.30.4
+// @version      4.30.5
 // @description  批量抓取 Temu 商品（详情页直接识别店铺和抓取状态，支持多币种价格/销量筛选、记住上次筛选值、生成销量TXT统计、中文/英文销量识别、JPG/PNG可选、原始字节下载、自动跳过推荐区、并发下载、自定义间隔）
 // @author       Gemini
 // @match        https://www.temu.com/*
@@ -20,7 +20,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '4.30.4';
+    const SCRIPT_VERSION = '4.30.5';
     const STORAGE_KEY = 'TEMU_SCRAPED_SHOPS_STORAGE';
     const IMAGE_FORMAT_KEY = 'TEMU_IMAGE_FORMAT';
     const MIN_SALES_KEY = 'TEMU_MIN_SALES';
@@ -555,24 +555,24 @@
     let lastDuplicateToastShop = '';
     let duplicateToastTimer = null;
 
-    function showDuplicateShopToast(shopName, isScraped = true) {
+    function showDuplicateShopToast(shopName) {
         if (!document.body) return;
         const oldToast = document.getElementById(DUPLICATE_TOAST_ID);
         if (oldToast) oldToast.remove();
         if (duplicateToastTimer) clearTimeout(duplicateToastTimer);
 
-        const accentColor = isScraped ? '#ff4d4f' : '#16a34a';
+        const accentColor = '#ff4d4f';
         const toast = document.createElement('div');
         toast.id = DUPLICATE_TOAST_ID;
         toast.style.cssText = [
             'position: fixed',
-            'top: 50%',
+            'top: 45%',
             'left: 50%',
             'z-index: 10005',
             'width: 620px',
             'max-width: calc(100vw - 32px)',
             'background: rgba(255,255,255,0.98)',
-            `border: 1px solid ${isScraped ? 'rgba(255,77,79,0.22)' : 'rgba(22,163,74,0.22)'}`,
+            'border: 1px solid rgba(255,77,79,0.22)',
             `border-left: 10px solid ${accentColor}`,
             'border-radius: 12px',
             'box-shadow: 0 18px 48px rgba(0,0,0,0.24)',
@@ -588,7 +588,7 @@
         ].join(';');
 
         const title = document.createElement('div');
-        title.textContent = isScraped ? '这个店铺之前抓取过' : '这个店铺还没有抓取';
+        title.textContent = '这个店铺之前抓取过';
         title.style.cssText = `font-weight: bold; color: ${accentColor}; margin-bottom: 10px; font-size: 32px; line-height: 1.3;`;
 
         const detail = document.createElement('div');
@@ -628,8 +628,12 @@
         if (!shopKey || shopKey === normalizeShopNameForCompare('未知店铺') || shopKey === lastDuplicateToastShop) return;
         const isScraped = isScrapedShopName(shopName);
         lastDuplicateToastShop = shopKey;
-        showDuplicateShopToast(shopName, isScraped);
-        updateStatusText(isScraped ? '该店铺之前已抓取' : '该店铺尚未抓取');
+        if (!isScraped) {
+            updateStatusText('该店铺尚未抓取');
+            return;
+        }
+        showDuplicateShopToast(shopName);
+        updateStatusText('该店铺之前已抓取');
     }
 
     function startDuplicateShopWatcher() {
