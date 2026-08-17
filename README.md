@@ -15,12 +15,15 @@ TEMU ScriptCat 自改版脚本，去掉本地下载器依赖，并支持 GitHub 
 - TEMU商品信息抓取下载: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/TEMU%E5%95%86%E5%93%81%E4%BF%A1%E6%81%AF%E6%8A%93%E5%8F%96%E4%B8%8B%E8%BD%BD.user.js
 - TEMU商品列表导出: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/TEMU%E5%95%86%E5%93%81%E5%88%97%E8%A1%A8%E5%AF%BC%E5%87%BA.user.js
 - TEMU单店巡查脚本: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/TEMU%E5%8D%95%E5%BA%97%E5%B7%A1%E6%9F%A5%E8%84%9A%E6%9C%AC.user.js
+- 商品主图视频批量更新: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/%E5%95%86%E5%93%81%E4%B8%BB%E5%9B%BE%E8%A7%86%E9%A2%91%E6%89%B9%E9%87%8F%E6%9B%B4%E6%96%B0.user.js
 - Temu 销售管理备货计算: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/Temu%E9%94%80%E5%94%AE%E7%AE%A1%E7%90%86%E5%A4%87%E8%B4%A7%E8%AE%A1%E7%AE%97.user.js
 - 合规中心-实拍图-自改版: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/%E5%90%88%E8%A7%84%E4%B8%AD%E5%BF%83-%E5%AE%9E%E6%8B%8D%E5%9B%BE-%E8%87%AA%E6%94%B9%E7%89%88.user.js
 - TEMU实拍图直传-自改版批量版: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temu%E5%AE%9E%E6%8B%8D%E5%9B%BE%E7%9B%B4%E4%BC%A0%E8%87%AA%E6%94%B9%E7%89%88%E6%89%B9%E9%87%8F%E7%89%88.user.js
   - 说明文档：[TEMU实拍图直传-自改版批量版-说明.md](TEMU%E5%AE%9E%E6%8B%8D%E5%9B%BE%E7%9B%B4%E4%BC%A0-%E8%87%AA%E6%94%B9%E7%89%88%E6%89%B9%E9%87%8F%E7%89%88-%E8%AF%B4%E6%98%8E.md)（与「合规中心-实拍图-自改版」的区别、接口协议、未验证项）
 
 以后修改脚本时提高 `@version` 并推送到 GitHub，ScriptCat 的“检查更新”即可更新。
+
+`商品主图视频批量更新`运行在 TEMU 图片/视频更新任务页。先选择并上传一次视频，再逐页检查商品并立即补空缺的主图视频；“同时补详情视频”默认关闭，开启后也只补详情空项，不覆盖已有视频。
 
 已安装旧文件名 `合规中心-商品合规-自动版-自改版.user.js` 的用户，自动商品合规需要删除旧脚本后按第 5 个新地址重装一次；配置 key 未改，模板配置通常会保留。
 
