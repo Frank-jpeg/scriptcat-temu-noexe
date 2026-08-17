@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         商品主图视频批量更新
 // @namespace    lan.temu.main-video-fill
-// @version      1.3.0
+// @version      1.3.1
 // @description  扫描缺少视频的 TEMU 商品，批量补主图视频，并可选择同时补空缺的详情视频。
 // @author       Lan
 // @match        https://agentseller.temu.com/material/image-task*
@@ -16,7 +16,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.3.0';
+  const VERSION = '1.3.1';
   const APP_ID = 'temu-main-video-fill-v1';
   const LIST_PAGE_SIZE = 20;
   const VIDEO_QUERY_BATCH_SIZE = 20;
@@ -388,13 +388,6 @@
     #${APP_ID} .tmvf-log { max-height: 112px; overflow: auto; padding: 7px 9px; border: 1px solid #e0e3e7; border-radius: 5px; background: #f8f9fa; color: #5e646b; font: 11px/1.55 Consolas, "Microsoft YaHei", sans-serif; }
     #${APP_ID} .tmvf-log-line[data-kind="error"] { color: #ac2f2f; }
     #${APP_ID} .tmvf-log-line[data-kind="success"] { color: #167040; }
-    #${APP_ID} .tmvf-confirm-layer { position: fixed; inset: 0; z-index: 2147483647; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(0,0,0,.42); }
-    #${APP_ID} .tmvf-confirm-layer[hidden] { display: none; }
-    #${APP_ID} .tmvf-confirm { width: 390px; max-width: 100%; padding: 18px; border-radius: 8px; background: #fff; box-shadow: 0 16px 50px rgba(0,0,0,.3); }
-    #${APP_ID} .tmvf-confirm h3 { margin: 0 0 10px; font-size: 16px; }
-    #${APP_ID} .tmvf-confirm p { margin: 0 0 10px; color: #555c64; font-size: 13px; line-height: 1.55; }
-    #${APP_ID} .tmvf-confirm input { width: 100%; height: 38px; padding: 0 9px; border: 1px solid #bfc5cc; border-radius: 5px; outline: none; }
-    #${APP_ID} .tmvf-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
     @media (max-width: 560px) {
       #${APP_ID} { right: 8px; bottom: 10px; }
       #${APP_ID} .tmvf-panel { width: calc(100vw - 16px); max-width: none; }
@@ -462,18 +455,6 @@
         </div>
       </div>
     </section>
-    <div class="tmvf-confirm-layer" hidden>
-      <div class="tmvf-confirm" role="alertdialog" aria-modal="true" aria-label="确认更新商品">
-        <h3>确认更新商品视频</h3>
-        <p class="tmvf-confirm-message"></p>
-        <p>输入 <strong class="tmvf-confirm-code"></strong> 后继续。</p>
-        <input class="tmvf-confirm-input" type="text" autocomplete="off" spellcheck="false">
-        <div class="tmvf-confirm-actions">
-          <button class="tmvf-btn tmvf-confirm-cancel" type="button">取消</button>
-          <button class="tmvf-btn tmvf-primary tmvf-confirm-submit" type="button" disabled>确认执行</button>
-        </div>
-      </div>
-    </div>
   `;
   document.body.appendChild(root);
 
@@ -483,7 +464,6 @@
     stage: root.querySelector('.tmvf-stage'), percent: root.querySelector('.tmvf-percent'), track: root.querySelector('.tmvf-track'), bar: root.querySelector('.tmvf-bar'), current: root.querySelector('.tmvf-current'),
     scan: root.querySelector('.tmvf-scan'), upload: root.querySelector('.tmvf-upload'), export: root.querySelector('.tmvf-export'), pause: root.querySelector('.tmvf-pause'), stop: root.querySelector('.tmvf-stop'),
     tbody: root.querySelector('.tmvf-tbody'), count: root.querySelector('.tmvf-count'), log: root.querySelector('.tmvf-log'), clearLog: root.querySelector('.tmvf-clear-log'),
-    confirmLayer: root.querySelector('.tmvf-confirm-layer'), confirmMessage: root.querySelector('.tmvf-confirm-message'), confirmCode: root.querySelector('.tmvf-confirm-code'), confirmInput: root.querySelector('.tmvf-confirm-input'), confirmCancel: root.querySelector('.tmvf-confirm-cancel'), confirmSubmit: root.querySelector('.tmvf-confirm-submit'),
   };
 
   function getMallId() {
@@ -974,23 +954,6 @@
     return { accepted, rejected };
   }
 
-  function showConfirm() {
-    if (!isCompleteMedia(state.media)) return;
-    const code = '开始更新';
-    const targetText = state.includeDetail
-      ? '主图或详情任一为空时，只补对应空项；已有主图和详情均不覆盖'
-      : '只处理缺少主图视频的商品，详情视频不会修改';
-    el.confirmMessage.textContent = `即将逐页扫描全部商品并复用“${state.selectedFile ? state.selectedFile.name : ''}”。${targetText}；停止任务不会撤销已经成功的更新。`;
-    el.confirmCode.textContent = code;
-    el.confirmInput.value = '';
-    el.confirmInput.dataset.code = code;
-    el.confirmSubmit.disabled = true;
-    el.confirmLayer.hidden = false;
-    setTimeout(() => el.confirmInput.focus(), 0);
-  }
-
-  function hideConfirm() { el.confirmLayer.hidden = true; }
-
   el.launch.addEventListener('click', () => {
     const opening = el.panel.hidden;
     el.panel.hidden = !opening;
@@ -1021,7 +984,7 @@
     state.includeDetail = el.includeDetail.checked;
     log(state.includeDetail ? '已开启：同时补空缺的详情视频' : '已关闭：只补主图视频');
   });
-  el.scan.addEventListener('click', showConfirm);
+  el.scan.addEventListener('click', scanProducts);
   el.upload.addEventListener('click', uploadSelectedVideo);
   el.export.addEventListener('click', () => {
     const blob = new Blob(['\ufeff', makeCsv(state.missingRows)], { type: 'text/csv;charset=utf-8' });
@@ -1042,13 +1005,9 @@
     if (state.controller) state.controller.abort();
     log('正在停止任务');
   });
-  el.confirmCancel.addEventListener('click', hideConfirm);
-  el.confirmInput.addEventListener('input', () => {
-    el.confirmSubmit.disabled = el.confirmInput.value.trim() !== el.confirmInput.dataset.code;
-  });
-  el.confirmSubmit.addEventListener('click', () => { hideConfirm(); scanProducts(); });
   el.clearLog.addEventListener('click', () => { state.logs = []; el.log.innerHTML = '<div class="tmvf-log-line">日志已清空</div>'; });
 
   updateButtons();
   console.info(`[商品主图视频批量更新] v${VERSION} 已加载`);
 }());
+
