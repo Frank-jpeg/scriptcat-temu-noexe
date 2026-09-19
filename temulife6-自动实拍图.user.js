@@ -11,7 +11,7 @@
 // @run-at       document-idle
 // @downloadURL  https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temulife6-%E8%87%AA%E5%8A%A8%E5%AE%9E%E6%8B%8D%E5%9B%BE.user.js
 // @updateURL    https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temulife6-%E8%87%AA%E5%8A%A8%E5%AE%9E%E6%8B%8D%E5%9B%BE.user.js
-// @version      2026.0804.1
+// @version      2026.0919.1
 // ==/UserScript==
 
 const AUTO_REAL_PHOTO_CONFIG_KEY = "goldabcd_noexe_auto_real_photo_config_v1";
@@ -264,7 +264,7 @@ function renderAutoRealPhotoSetupPanel(message, mallId, mallName, config) {
 
     const panel = document.createElement("div");
     panel.id = "auto-real-photo-noexe-setup";
-    panel.style = "z-index:9999;position:absolute;top:422px;left:260px;width:360px;background:#fff;color:#111;border:1px solid #ff8fb3;border-radius:6px;padding:10px;font-size:13px;line-height:1.45;box-shadow:0 6px 18px rgba(0,0,0,.15);";
+    panel.style = "z-index:9999;position:absolute;top:422px;left:260px;width:430px;background:#fff;color:#111;border:1px solid #ff8fb3;border-radius:6px;padding:10px;font-size:13px;line-height:1.45;box-shadow:0 6px 18px rgba(0,0,0,.15);";
 
     const title = document.createElement("div");
     title.textContent = AUTO_REAL_PHOTO_BUTTON_TEXT;
@@ -290,26 +290,89 @@ function renderAutoRealPhotoSetupPanel(message, mallId, mallName, config) {
     panel.appendChild(mallDiv);
 
     const templateMap = getEffectiveAutoRealPhotoTemplateSpuMap(config || AUTO_REAL_PHOTO_DEFAULT_CONFIG, mallId);
-    const existingName = Object.keys(templateMap).find(function(key) {
-        return String(templateMap[key] || "").trim();
-    }) || "";
+    const templateEntries = Object.keys(templateMap).filter(function(name) {
+        return String(templateMap[name] || "").trim();
+    }).map(function(name) {
+        return [name, String(templateMap[name]).trim()];
+    });
+
+    const listTitle = document.createElement("div");
+    listTitle.textContent = "已保存模板（" + templateEntries.length + "）";
+    listTitle.style = "font-weight:700;margin:8px 0 5px;";
+    panel.appendChild(listTitle);
+
+    const templateList = document.createElement("div");
+    templateList.style = "max-height:180px;overflow:auto;border:1px solid #ddd;border-radius:4px;margin-bottom:8px;";
+    panel.appendChild(templateList);
+
+    if (!templateEntries.length) {
+        const emptyDiv = document.createElement("div");
+        emptyDiv.textContent = "暂无模板";
+        emptyDiv.style = "padding:8px;color:#777;text-align:center;";
+        templateList.appendChild(emptyDiv);
+    }
 
     const nameInput = document.createElement("input");
     nameInput.placeholder = "模板名称（仅备注，例如 帽子）";
-    nameInput.value = existingName;
     nameInput.style = "width:100%;height:30px;box-sizing:border-box;margin:4px 0;padding:5px 8px;border:1px solid #bbb;border-radius:4px;";
     panel.appendChild(nameInput);
 
     const spuInput = document.createElement("input");
     spuInput.placeholder = "已有实拍图的模板SPU，只填数字";
-    const existingSpu = Object.keys(templateMap).map(function(key) {
-        return templateMap[key];
-    }).find(function(spuId) {
-        return String(spuId || "").trim();
-    });
-    spuInput.value = existingSpu || "";
     spuInput.style = "width:100%;height:30px;box-sizing:border-box;margin:4px 0 6px 0;padding:5px 8px;border:1px solid #bbb;border-radius:4px;";
     panel.appendChild(spuInput);
+
+    templateEntries.forEach(function(entry, index) {
+        const templateName = entry[0];
+        const spuId = entry[1];
+        const row = document.createElement("div");
+        row.style = "display:grid;grid-template-columns:minmax(0,1fr) minmax(110px,1fr) auto auto;gap:6px;align-items:center;padding:6px 8px;border-bottom:" + (index === templateEntries.length - 1 ? "0" : "1px solid #eee") + ";";
+
+        const nameDiv = document.createElement("div");
+        nameDiv.textContent = templateName;
+        nameDiv.title = templateName;
+        nameDiv.style = "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+        row.appendChild(nameDiv);
+
+        const spuDiv = document.createElement("div");
+        spuDiv.textContent = spuId;
+        spuDiv.title = spuId;
+        spuDiv.style = "font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+        row.appendChild(spuDiv);
+
+        const editButton = document.createElement("button");
+        editButton.textContent = "编辑";
+        editButton.style = "border:1px solid #bbb;background:#fff;border-radius:4px;padding:2px 7px;cursor:pointer;";
+        editButton.onclick = function() {
+            nameInput.value = templateName;
+            spuInput.value = spuId;
+            nameInput.focus();
+        };
+        row.appendChild(editButton);
+
+        const deleteButton = document.createElement("button");
+        deleteButton.textContent = "删除";
+        deleteButton.style = "border:1px solid #e66;background:#fff;color:#b42318;border-radius:4px;padding:2px 7px;cursor:pointer;";
+        deleteButton.onclick = async function() {
+            if (!confirm("确认删除模板：" + templateName + " -> " + spuId + "？")) return;
+            const targetMallId = String(mallId || getCurrentAutoRealPhotoMallId() || "");
+            const nextConfig = await loadAutoRealPhotoConfig();
+            const mallMap = nextConfig.mallTemplateSpuMap[targetMallId];
+            if (hasAutoRealPhotoTemplateSpu(mallMap)) {
+                const nextMallMap = normalizeAutoRealPhotoTemplateSpuMap(mallMap);
+                delete nextMallMap[templateName];
+                nextConfig.mallTemplateSpuMap[targetMallId] = nextMallMap;
+            } else {
+                const nextDefaultMap = normalizeAutoRealPhotoTemplateSpuMap(nextConfig.templateSpuMap);
+                delete nextDefaultMap[templateName];
+                nextConfig.templateSpuMap = nextDefaultMap;
+            }
+            const savedConfig = await saveAutoRealPhotoConfig(nextConfig);
+            renderAutoRealPhotoSetupPanel("已删除模板：" + templateName, targetMallId, mallName, savedConfig);
+        };
+        row.appendChild(deleteButton);
+        templateList.appendChild(row);
+    });
 
     const matchHint = document.createElement("div");
     matchHint.textContent = "只处理待传图状态1；名称只做备注，实际按模板SPU的TEMU类目ID(cat_id)匹配。";
@@ -338,8 +401,8 @@ function renderAutoRealPhotoSetupPanel(message, mallId, mallName, config) {
         const mallMap = normalizeAutoRealPhotoTemplateSpuMap(nextConfig.mallTemplateSpuMap[String(targetMallId)] || {});
         mallMap[templateName] = spuId;
         nextConfig.mallTemplateSpuMap[String(targetMallId)] = mallMap;
-        await saveAutoRealPhotoConfig(nextConfig);
-        alert("已保存模板，刷新页面后生效");
+        const savedConfig = await saveAutoRealPhotoConfig(nextConfig);
+        renderAutoRealPhotoSetupPanel("已保存模板：" + templateName + " -> " + spuId, targetMallId, mallName, savedConfig);
     };
 
     const enableButton = document.createElement("button");
