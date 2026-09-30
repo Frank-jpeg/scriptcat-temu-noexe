@@ -24,7 +24,7 @@
 
 - 共享配置和运行日志面板只由 `temu-life-1-price.user.js` 创建；生命周期 2-7 只发送 `goldabcd-noexe-log-event`。修改日志面板或筛选项时改生命周期 1 并提高其版本，不要把整套面板复制回 2-7。
 - 生命周期 5、6 使用各自独立配置键，不能合并到生命周期 1-4 的 `goldabcd_noexe_config_v1`。
-- 生命周期 7 是手动拒绝，阈值用 `>=`，不可改成自动运行或夹带改标题。用户明确不需要与提交核价互斥；不要为此改动第 1 个的报价逻辑或调度。
+- 生命周期 7 启用后每轮结束 1 分钟自动循环，阈值用 `>=`；按店铺保存阈值、类型与启用状态，刷新恢复。不可夹带改标题。用户明确不需要与提交核价互斥；不要为此改动第 1 个的报价逻辑或调度。
 - 修改 1 或 7 时，根目录稳定入口与 `versions/` 中对应新版副本内容保持一致；旧副本不修改。拒绝核价测试见 `tests/batch-reject.test.cjs`。
 
 ## 检查命令
@@ -32,5 +32,5 @@
 ```bash
 find . -name '*.user.js' -print0 | xargs -0 -n1 node --check
 rg -n 'jianpanlan0-svg/scriptcat-temu-noexe|@version|@updateURL|@downloadURL|NOEXE_UI_VERSION|SCRIPT_VERSION' .
-node --test tests/batch-reject.test.cjs
+node --test tests/batch-reject.test.cjs tests/auto-reject.test.cjs
 ```

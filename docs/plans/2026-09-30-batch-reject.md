@@ -1,14 +1,12 @@
-# Batch Reject Implementation Plan
+# Auto Reject Implementation Plan
 
-**Goal:** 新增生命周期 7，以次数 ≥ 输入值批量拒绝当前店铺待确认核价单。
+**Goal:** 第 7 个启用后持续自动拒绝次数 ≥ 输入值的待确认单。
 
-**Architecture:** 独立单文件脚本；共享配置只读，共享日志通过事件发送。第 1 个仅增加日志筛选；按用户要求不做跨脚本互斥或报价调度改动。
+**Architecture:** 单文件脚本，串行轮询，每轮结束 60 秒后继续；独立按店铺保存设置；共享日志通过事件发送。
 
-**Tech Stack:** 原生 JavaScript、ScriptCat、Node 内置测试。
+**Tech Stack:** JavaScript、ScriptCat、localStorage、Node 内置测试。
 
-## 实现及验收
-
-1. 新增 `temu-life-7-reject.user.js`：正整数输入、扫描去重、预览复查、串行拒绝、停止、错误显示。默认 9，按 ≥ 处理。
-2. 修改 `temu-life-1-price.user.js`：只提高版本至 2026.0930.1 并添加日志筛选，核对业务部分与改动前逐字相同。
-3. 执行 `node --test tests/batch-reject.test.cjs`，全部用户脚本运行 `node --check`，通过本地模拟页验证全托/半托及停止功能。
-4. 同步 README/UPSTREAM/AGENTS/验证记录，将 1 和 7 新版本另存到 versions/，保留稳定安装入口，提交并推送 main，确认 raw 地址。
+1. 用启用/停用取代扫描/确认，首次不启用，已保存启用的页面刷新 5 秒后恢复。
+2. 自动扫描并执行，长任务不重叠，停止等待在途请求结束；异常暂停。
+3. 运行业务和自动循环测试、浏览器模拟验证；确保第 1 个无修改。
+4. 文档同步、另存 2026.0930.2 副本，提交并推送，验证稳定安装地址。
