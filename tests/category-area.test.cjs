@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { normalizeSettings, uniqueItems, buildPlan, categoryList, createWorker } = require('../temu-life-8-area.user.js');
+const { lookupCategory, normalizeSettings, uniqueItems, buildPlan, categoryList, createWorker } = require('../temu-life-8-area.user.js');
 const item = (skc, cat = '100', area = 3, canEdit = true) => ({ productSkcId: skc, leafCatId: cat, leafCatName: '帽子', cat4Name: '服装', expectReceiveAreaConfigType: area, canEditExpectReceiveArea: canEdit });
 const rules = { 100: { name: '帽子', area: 1 }, 200: { name: '帽子', area: 2 } };
 function worker(request, other = {}) {
@@ -20,17 +20,46 @@ test('重复 SKC 只修改一次；不同类目或权限的冲突快照排除', 
     assert.equal(uniqueItems([item('a'), item('a', '100', 3, false)]).length, 0);
 });
 
-test('命名模板和当前选择恢复，规则不互相覆盖；无效模板不能自动开始', () => {
-    const saved = normalizeSettings({ enabled: true, activeTemplate: '模板乙', templates: [
-        { name: '模板甲', rules: { 100: { name: '帽子', area: 1 } } },
-        { name: '模板乙', rules: { 100: { name: '帽子', area: 2 } } }
+test('旧模板合并，冲突优先原选中模板，迁移暂停；新版恢复所有规则', () => {
+    const saved = normalizeSettings({ enabled: true, activeTemplate: '甲', templates: [
+        { name: '甲', rules: { 100: { name: '帽子', area: 1 } } },
+        { name: '乙', rules: { 100: { name: '帽子', area: 2 }, 200: { name: '水杯', area: 2 } } }
     ] });
-    assert.equal(saved.enabled, true);
-    assert.equal(saved.rules[100].area, 2);
-    saved.rules[100].area = 1;
-    assert.equal(saved.templates[1].rules[100].area, 2);
-    assert.equal(normalizeSettings({ enabled: true, activeTemplate: '不存在', templates: [] }).enabled, false);
-    assert.equal(normalizeSettings({ enabled: true, activeTemplate: '无效', templates: [{ name: '无效', rules: { x: { area: 1 }, 10: { area: 9 } } }] }).enabled, false);
+    assert.equal(saved.enabled, false);
+    assert.equal(saved.rules[100].area, 1);
+    assert.equal(saved.rules[200].area, 2);
+    const restored = normalizeSettings({ ...saved, enabled: true });
+    assert.equal(restored.enabled, true);
+    assert.equal(Object.keys(restored.rules).length, 2);
+    assert.equal(normalizeSettings({ schemaVersion: 2, enabled: true, rules: {} }).enabled, false);
+});
+
+test('代表 SPU 只精确查询一次，不翻页不全店扫描', async () => {
+    const calls = [];
+    const found = await lookupCategory(async (...args) => {
+        calls.push(args);
+        return { success: true, result: { dataList: [{ productId: 123, catIdList: [9, 100], catNameList: ['服装', '帽子'] }] } };
+    }, '123');
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0][1].productSpuIdList, [123]);
+    assert.equal(calls[0][2], false);
+    assert.deepEqual(found, { id: '100', spu: '123', name: '帽子', parent: '服装' });
+});
+
+test('无效编号不查询；返回其他 SPU、无类目及冲突类目拒绝保存', async () => {
+    await assert.rejects(lookupCategory(() => { throw Error('不应调用'); }, 'abc'), /有效商品/);
+    for (const rows of [[], [{productId: 124, catIdList:[100]}], [{productId:123}],
+        [{productId:123,catIdList:[100]}, {productId:123,catIdList:[200]}]]) {
+        await assert.rejects(lookupCategory(async () => ({result:{dataList:rows}}), '123'));
+    }
+});
+
+test('没有类目名称时不冒充商品名称；备注与 SPU 可恢复', async () => {
+    const found = await lookupCategory(async () => ({result:{dataList:[{productId:123,productName:'商品标题',catIdList:[100]}]}}), '123');
+    assert.equal(found.name, '');
+    const restored = normalizeSettings({schemaVersion:2,rules:{100:{name:'帽子',label:'我的备注',spu:'123',area:2}}});
+    assert.equal(restored.rules[100].spu, '123');
+    assert.equal(restored.rules[100].label, '我的备注');
 });
 
 test('类目列表保留模板中暂时无商品的规则，名称来自接口并显示所属类目', () => {

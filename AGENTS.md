@@ -4,17 +4,12 @@
 - 当前目录是独立 Git 仓库：`Frank-jpeg/scriptcat-temu-noexe`。
 - 远程仓库推送方式**因机器而异**，先确认自己在哪台：
   - **macOS 维护机**（本地目录 `/Users/mini/Desktop/codex项目/TEMU 脚本`）：用 SSH `git@github.com:Frank-jpeg/scriptcat-temu-noexe.git`，已验证可用；HTTPS 可能超时。
-  - **Windows 机**：SSH 密钥未配置，会 `Permission denied (publickey)`。改用 HTTPS + gh 令牌，并挂代理：
-    ```bash
-    export HTTPS_PROXY=http://127.0.0.1:7897 HTTP_PROXY=http://127.0.0.1:7897
-    git remote set-url origin https://github.com/Frank-jpeg/scriptcat-temu-noexe.git
-    git -c credential.helper='!gh auth git-credential' push origin main
-    ```
+  - **Windows 机**：目录 `G:\temu脚本`，用 HTTPS + gh：`git -c 'credential.helper=!gh auth git-credential' push origin HEAD:main`。代理以本机实际配置为准，不写死旧端口。
 
 ## 发布规则
 
 - 修改任意 `.user.js` 后，必须提高脚本头部 `@version`，否则 ScriptCat / 油猴可能不会更新。
-- 如果同一脚本内存在 `NOEXE_UI_VERSION` 或 `SCRIPT_VERSION`，版本号要和 `@version` 同步。
+- 如果同一脚本内存在 `NOEXE_UI_VERSION`、`SCRIPT_VERSION` 或 `VERSION`，版本号要和 `@version` 同步。
 - `@updateURL` 和 `@downloadURL` 必须指向 `https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/...`。
 - 重命名 `.user.js` 时，必须同步脚本头 `@updateURL` / `@downloadURL`、README 安装地址，并告诉用户旧脚本要重装一次。
 - 旧地址 `jianpanlan0-svg/scriptcat-temu-noexe` 依赖 GitHub 转移重定向；不要在旧账号重新创建同名仓库。
@@ -27,11 +22,12 @@
 - 生命周期 7 启用后每轮结束 1 分钟自动循环，阈值用 `>=`；按店铺保存阈值、类型与启用状态，刷新恢复。不可夹带改标题。用户明确不需要与提交核价互斥；不要为此改动第 1 个的报价逻辑或调度。
 - 修改 1、7 或 8 时，根目录稳定入口与 `versions/` 中对应新版副本内容保持一致；旧副本不修改。拒绝核价测试见 `tests/batch-reject.test.cjs`。
 
-- 生命周期 8 使用独立的 `goldabcd_category_area_v1:<mallId>` 保存命名模板与启停状态；按末级类目 ID 匹配，未配置不改。查询每页 50，最多 200 页，不越过 10000 窗口；存在未覆盖数据必须显式提示。
+- 生命周期 8 使用独立的 `goldabcd_category_area_v1:<mallId>` 保存类目规则与启停状态；按末级类目 ID 匹配，未配置不改。配置类目只允许精确查询代表 SPU，不退回全店扫描。运行查询每页 50，最多 200 页，不越过 10000 窗口；存在未覆盖数据必须显式提示。
 
 ## 检查命令
 
 ```bash
+# Windows PowerShell：Get-ChildItem -Filter '*.user.js' | ForEach-Object { node --check $_.FullName }
 find . -name '*.user.js' -print0 | xargs -0 -n1 node --check
 rg -n 'jianpanlan0-svg/scriptcat-temu-noexe|@version|@updateURL|@downloadURL|NOEXE_UI_VERSION|SCRIPT_VERSION' .
 node --test tests/batch-reject.test.cjs tests/auto-reject.test.cjs tests/category-area.test.cjs

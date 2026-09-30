@@ -13,6 +13,11 @@ window.fixture = { writes: [], reads: [], logs: [], hold: false, release: null, 
 window.addEventListener('goldabcd-noexe-log-event', e => fixture.logs.push(e.detail));
 window.fetch = async (url, options) => {
     const body = JSON.parse(options.body);
+    if (url.endsWith('/searchForChainSupplier')) {
+        fixture.reads.push(body);
+        const sample = { '111': [100, '帽子', '男士服装'], '222': [200, '帽子', '女士服装'], '333': [300, '水杯', '家居'] }[String(body.productSpuIdList[0])];
+        return {ok:true,json:async()=>({success:true,result:{dataList:sample ? [{productId:body.productSpuIdList[0],catIdList:[9,sample[0]],catNameList:[sample[2],sample[1]]}] : []}})};
+    }
     if (url.endsWith('/pageQuerySkcPickOutConfig')) {
         fixture.reads.push(body);
         const all = fixture.rows.filter(row => body.expectReceiveAreaConfigTypeList.includes(row.expectReceiveAreaConfigType));
