@@ -3,7 +3,7 @@
 <h1>类目到货区域测试</h1><p>所有请求为模拟数据，不连接 TEMU。</p>
 <script>
 localStorage.setItem('agentseller-mall-info-id', 'area-test-mall');
-window.fixture = { writes: [], reads: [], logs: [], hold: false, release: null, fail: false, rows: [
+window.fixture = { writes: [], reads: [], nameReads: [], logs: [], hold: false, release: null, fail: false, failNames: false, rows: [
     { productSkcId:'a',leafCatId:100,leafCatName:'帽子',cat4Name:'男士服装',expectReceiveAreaConfigType:3,canEditExpectReceiveArea:true },
     { productSkcId:'b',leafCatId:200,leafCatName:'帽子',cat4Name:'女士服装',expectReceiveAreaConfigType:1,canEditExpectReceiveArea:true },
     { productSkcId:'c',leafCatId:100,leafCatName:'帽子',cat4Name:'男士服装',expectReceiveAreaConfigType:1,canEditExpectReceiveArea:true },
@@ -16,7 +16,14 @@ window.fetch = async (url, options) => {
     if (url.endsWith('/searchForChainSupplier')) {
         fixture.reads.push(body);
         const sample = { '111': [100, '帽子', '男士服装'], '222': [200, '帽子', '女士服装'], '333': [300, '水杯', '家居'] }[String(body.productSpuIdList[0])];
-        return {ok:true,json:async()=>({success:true,result:{dataList:sample ? [{productId:body.productSpuIdList[0],catIdList:[9,sample[0]],catNameList:[sample[2],sample[1]]}] : []}})};
+        return {ok:true,json:async()=>({success:true,result:{dataList:sample ? [{productId:body.productSpuIdList[0],catIdList:[9,sample[0]]}] : []}})};
+    }
+    if (url.endsWith('/category/children/list')) {
+        fixture.nameReads.push(body);
+        if (fixture.failNames) throw new Error('名称接口暂不可用');
+        return {ok:true,json:async()=>({success:true,result:{categoryNodeVOS:[
+            {catId:100,catName:'帽子',parentCatId:9},{catId:200,catName:'帽子',parentCatId:9},{catId:300,catName:'水杯',parentCatId:9}
+        ]}})};
     }
     if (url.endsWith('/pageQuerySkcPickOutConfig')) {
         fixture.reads.push(body);

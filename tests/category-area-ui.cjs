@@ -20,6 +20,7 @@ const assert = require('node:assert/strict');
     assert.equal(await host.locator('tbody tr').count(),2);
     let reads=await page.evaluate(()=>fixture.reads);
     assert.equal(reads.length,2); assert.ok(reads.every(r=>r.productSpuIdList));
+    assert.equal(await page.evaluate(()=>fixture.nameReads.length),2);
     assert.equal(await page.evaluate(()=>fixture.writes.length),0);
     await page.reload();await host.locator('.open').click();
     assert.equal(await host.locator('tbody tr').count(),2);
@@ -44,7 +45,34 @@ const assert = require('node:assert/strict');
     assert.equal(await host.locator('tbody tr').count(),2);
     assert.match(await host.locator('.status').innerText(),/已暂停/);
     assert.ok(await page.evaluate(()=>localStorage.getItem('goldabcd_category_area_v1:area-test-mall:before-v2')));
+
+    // Cache survived reload: SPU is still checked, but no name request is made.
+    await host.locator('.spu').fill('111'); await host.locator('.load').click();
+    await host.locator('.category').filter({hasText:'帽子'}).waitFor();
+    assert.equal(await page.evaluate(()=>fixture.reads.length),1);
+    assert.equal(await page.evaluate(()=>fixture.nameReads.length),0);
+    await host.locator('.new').click();
+
+    // Names that fail to load remain retryable and never prevent saving a valid category ID.
+    await page.evaluate(()=>{fixture.failNames=true;});
+    await host.locator('.spu').fill('333'); await host.locator('.load').click();
+    await host.locator('.status').filter({hasText:'名称查询失败'}).waitFor();
+    assert.equal(await host.locator('.save-template').isDisabled(),false);
+    assert.match(await host.locator('.category').innerText(),/ID 300/);
+    await page.evaluate(()=>{fixture.failNames=false;});
+    await host.locator('.load').click();
+    await host.locator('.category').filter({hasText:'水杯'}).waitFor();
+    assert.equal(await page.evaluate(()=>fixture.nameReads.length),2);
+    await host.locator('.save-template').click();
+    await page.screenshot({path:require('node:path').join(require('node:os').tmpdir(),'temu-area-name-cache-preview.png')});
+
+    await page.evaluate(()=>localStorage.setItem('goldabcd_category_area_v1:area-test-mall',JSON.stringify({schemaVersion:2,enabled:false,rules:{100:{name:'类目 ID 100',label:'我的备注',spu:'111',area:2}}})));
+    await page.reload(); await host.locator('.open').click();
+    assert.match(await host.locator('tbody').innerText(),/帽子/);
+    assert.match(await host.locator('tbody').innerText(),/我的备注/);
+    assert.match(await host.locator('tbody').innerText(),/义乌/);
+    assert.equal(await page.evaluate(()=>fixture.reads.length+fixture.nameReads.length+fixture.writes.length),0);
     assert.deepEqual(errors,[]);
-    console.log('UI PASS: SPU精确查询、两条一起执行、保存恢复、编辑删除、无匹配、旧模板迁移暂停和备份');
+    console.log('UI PASS: SPU精确查询、首次名称查询、刷新缓存命中、多规则执行、保存恢复、旧规则补名、编辑删除、名称失败与恢复、旧模板迁移');
   } finally { if(browser)await browser.close(); server.kill(); }
 })().catch(e=>{console.error(e);process.exitCode=1});

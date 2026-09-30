@@ -200,4 +200,4 @@ grep -ohE "(async )?function [a-zA-Z_][a-zA-Z0-9_]*" "上新生命周期-2-开�
 
 WorkBuddy 提供的参考脚本位于 `G:\2026-09-30-16-43-14\temu-期望到货区域-按类目批量修改.user.js`，只读参考其 10000 查询窗口限制，未删除/改写，也未注入真实页面。8 按目标方向分轮查询并明确标识不完整结果，避免把窗口内没匹配商品当成全店完成。
 
-第 8 个 `2026.0930.2` 配置查询复用 `/api/kiana/mms/robin/searchForChainSupplier` 的 `productSpuIdList`，只请求一个 SPU，不读取全店类目。返回商品 ID 必须一致，末级 ID 取 `catIdList` 最后一项；`catNameList` 尚未实店核实，缺失时只显示 ID 并允许备注。旧模板合并及迁移规则见 README。
+第 8 个配置查询复用 `/api/kiana/mms/robin/searchForChainSupplier` 的 `productSpuIdList`，只请求一个 SPU，不读取全店类目。返回商品 ID 必须一致，末级 ID 取 `catIdList` 最后一项。`2026.0930.3` 起，当商品响应缺少名称时，以倒数第二个父级 ID 查询 `/anniston-agent-seller/category/children/list`，精确匹配 `catId` 和 `parentCatId` 后缓存 `catName`。该名称接口已只读验证，不需要全站类目库；旧模板合并及迁移规则见 README。

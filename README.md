@@ -37,7 +37,7 @@ Windows 使用 HTTPS + `gh` 凭据，macOS 可使用已配置的 SSH。按当前
 ```powershell
 git -c 'credential.helper=!gh auth git-credential' push origin HEAD:main
 Get-ChildItem -Filter '*.user.js' | ForEach-Object { node --check $_.FullName }
-node --test tests/batch-reject.test.cjs tests/auto-reject.test.cjs tests/category-area.test.cjs
+node --test tests/batch-reject.test.cjs tests/auto-reject.test.cjs tests/category-area.test.cjs tests/category-names.test.cjs
 ```
 
 发布新版时：
@@ -90,7 +90,9 @@ ScriptCat 靠比较 `@version` 大小决定是否更新。若把日期式改成�
 4. 点“开始全部规则”：全部已保存规则一起运行，立即处理一轮，每轮结束 1 分钟再查。暂停后可以编辑；未保存编辑先保存或清空。
 5. 配置保存在 `goldabcd_category_area_v1:<mallId>`；新版 `schemaVersion: 2` 保存规则和开关，刷新时开启状态 5 秒后恢复。旧版多套模板合并成规则列表，同类目冲突优先原选中模板；迁移后暂停供核对，原配置备份到同名键加 `:before-v2`。
 
-查询复用自动实拍图的 SPU 接口，严格校验返回 SPU 和末级类目 ID。类目名称取响应 `catNameList`；该名称字段尚待实店核对，缺失时明确显示类目 ID，可填写备注，不会把商品标题当成类目名称。后台按末级类目 ID 匹配，同名不同 ID 分开处理。
+查询复用自动实拍图的 SPU 接口，严格校验返回 SPU 和末级类目 ID。第 8 个 `2026.0930.3` 起，如果商品响应无名称，首次使用类目路径中的父级 ID 查询一次名称接口，精确匹配目标 ID 后缓存；后续查询和刷新复用缓存，不附带或下载全站类目库。后台仍按末级类目 ID 匹配，同名不同 ID 分开处理。
+
+名称单独缓存在 `goldabcd_category_names_v1:<mallId>`，没有定时过期，名称失败不缓存。旧规则已有缓存时自动补名；尚未查过名称的旧规则点“编辑 → 查询类目 → 保存规则”即可补全，备注和到货区域保留。名称接口失败时仍可用已确定的 ID 保存规则，并显示原因；不会把商品标题或备注冒充类目名。接口与验证说明见 [类目名称查询](docs/category-name-cache.md)。
 
 只修改“区域与规则不一致、且允许编辑”的 SKC，广东/义乌分组，每批最多 50 个，间隔 2 秒。接口失败或结果不明时暂停，不自动重试写请求。这里只修改期望区域，不保证实际仓库分配。
 
