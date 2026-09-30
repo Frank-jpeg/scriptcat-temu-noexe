@@ -21,14 +21,15 @@
 - 生命周期 5、6 使用各自独立配置键，不能合并到生命周期 1-4 的 `goldabcd_noexe_config_v1`。
 - 生命周期 7 启用后每轮结束 1 分钟自动循环，阈值用 `>=`；按店铺保存阈值、类型与启用状态，刷新恢复。不可夹带改标题。用户明确不需要与提交核价互斥；不要为此改动第 1 个的报价逻辑或调度。
 - 修改 1、7 或 8 时，根目录稳定入口与 `versions/` 中对应新版副本内容保持一致；旧副本不修改。拒绝核价测试见 `tests/batch-reject.test.cjs`。
-
+- 生命周期 7、8 的按钮统一粉色，开关/运行状态用文字显示；配置面板沿用 5、6 的按钮下方紧凑白底粉边样式，不随开关切换为绿色或橙色。
 - 生命周期 8 使用独立的 `goldabcd_category_area_v1:<mallId>` 保存类目规则与启停状态；按末级类目 ID 匹配，未配置不改。配置类目只允许精确查询代表 SPU，不退回全店扫描。运行查询每页 50，最多 200 页，不越过 10000 窗口；存在未覆盖数据必须显式提示。
+- 生命周期 8 的名称按需查询父级子类目接口，精确匹配目标 ID 后保存到独立的 `goldabcd_category_names_v1:<mallId>`；不附带全站类目库、不定时重爬。名称只用于显示，不修改匹配 ID 或扩展到子类目。接口与缓存边界见 [类目名称查询](docs/category-name-cache.md)。
 
 ## 检查命令
 
 ```bash
-# Windows PowerShell：Get-ChildItem -Filter '*.user.js' | ForEach-Object { node --check $_.FullName }
+# Windows PowerShell：Get-ChildItem -Recurse -Filter '*.user.js' | ForEach-Object { node --check $_.FullName }
 find . -name '*.user.js' -print0 | xargs -0 -n1 node --check
 rg -n 'jianpanlan0-svg/scriptcat-temu-noexe|@version|@updateURL|@downloadURL|NOEXE_UI_VERSION|SCRIPT_VERSION' .
-node --test tests/batch-reject.test.cjs tests/auto-reject.test.cjs tests/category-area.test.cjs
+node --test tests/batch-reject.test.cjs tests/auto-reject.test.cjs tests/category-area.test.cjs tests/category-names.test.cjs
 ```

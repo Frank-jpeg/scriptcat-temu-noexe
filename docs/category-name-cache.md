@@ -9,6 +9,8 @@
 3. 缓存未命中时请求 `POST /anniston-agent-seller/category/children/list`，请求体 `{parentCatId:父级ID}`；一级类目用 `{}`。这是“查子级”接口，并非“按 ID 查详情”。
 4. 在 `result.categoryNodeVOS` 中同时精确匹配 `catId` 与 `parentCatId`，取 `catName`。只缓存目标类目，不存整批子级，不遍历全树。
 
+两次请求均使用当前页面登录态、`Content-Type: application/json` 和当前店铺 `mallid` 请求头；只读请求 30 秒超时，响应须 `success:true`。切店后需要刷新页面，不能复用原店铺的配置上下文。
+
 首次通常为一次 SPU 查询加一次名称查询；之后仍校验 SPU，但同类目名称直接读缓存。名称接口异常、缺字段、未匹配或重复匹配均显示原因，保留已经确认的商品类目 ID，允许备注和保存；失败不缓存，下次手动查询可重试。不因名称失败扫描全店或猜测其他类目。
 
 名称仅用于显示；规则仍按区域列表返回的 `leafCatId` 精确匹配，不扩展上级类目、不改动区域写入。

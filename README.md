@@ -36,7 +36,7 @@ Windows 使用 HTTPS + `gh` 凭据，macOS 可使用已配置的 SSH。按当前
 
 ```powershell
 git -c 'credential.helper=!gh auth git-credential' push origin HEAD:main
-Get-ChildItem -Filter '*.user.js' | ForEach-Object { node --check $_.FullName }
+Get-ChildItem -Recurse -Filter '*.user.js' | ForEach-Object { node --check $_.FullName }
 node --test tests/batch-reject.test.cjs tests/auto-reject.test.cjs tests/category-area.test.cjs tests/category-names.test.cjs
 ```
 
@@ -118,17 +118,23 @@ ScriptCat 靠比较 `@version` 大小决定是否更新。若把日期式改成�
 
 带版本号的副本保存在 `versions/`，稳定安装入口仍使用仓库根目录文件。验证记录见 [批量拒绝核价验证记录](docs/batch-reject-validation.md)。
 
-`合规中心-实拍图-自改版` 不再依赖 `127.0.0.1:3000`，也不需要客户手写 JSON。
+### 5 自动商品合规
 
 `temulife5-自动商品合规.user.js` 不再依赖 `127.0.0.1:3000`。首次安装默认停用，打开 TEMU 商品选择页后先在第 5 个按钮里保存当前店铺“合规参考模板SPU”，再点“启用自动合规”。启用后脚本每 15 分钟轮询一个店铺，按模板SPU与目标商品相同的 TEMU `cat_id` 复制当前待办合规信息并提交。
 
 自动商品合规当前只扫描 `task_type_list: [60]`、`task_status_list: [2]`，即“制造商信息待处理”的商品。制造商信息完成后，即使其他合规任务仍待上传，该商品也不会再次进入自动队列。日志里的“合规成功”只表示 `edit_compliance` 接口返回成功，不代表页面上的全部合规任务都已完成；出现部分合规时需要在页面复查剩余任务。
 
+### 6 自动实拍图
+
 `temulife6-自动实拍图.user.js` 同样默认停用。先在第 6 个按钮里保存当前店铺已有实拍图的模板SPU，再启用自动实拍图。页面加载且启用后约 1 分钟开始扫描，之后每 15 分钟轮询一个店铺，并以 2.5 秒单任务方式提交。
 
 自动实拍图只扫描并在提交前复查状态 `1`（待传图）；状态 `4`（图中标签有异常）不会进入队列。目标商品还必须可编辑、有 SKU，并且“制造商信息”状态为 `3`（已完成）。模板与目标按 TEMU `cat_id` 匹配，模板 `label_image_list` 中 `position=1/2` 的全部图片会复制到目标商品的全部 SKU。
 
-客户操作流程：打开 TEMU 实拍图页面后点左侧橙色“实拍图”抽屉按钮，选择图片来源，再在“目标SPU”里一行一个粘贴要提交的 SPU，最后点“提交这些SPU”。
+### 合规中心实拍图工具
+
+以下对应 `合规中心-实拍图-自改版.user.js`，与生命周期 6 的自动模板流程分开。该工具不依赖 `127.0.0.1:3000`，也不需要手写 JSON。
+
+打开 TEMU 实拍图页面后点左侧橙色“实拍图”抽屉按钮，选择图片来源，再在“目标SPU”里一行一个粘贴要提交的 SPU，最后点“提交这些SPU”。
 
 图片来源有两种：
 
