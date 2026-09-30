@@ -12,6 +12,7 @@ TEMU ScriptCat 自改版脚本，去掉本地下载器依赖，并支持 GitHub 
 - 4 确认商品信息: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temu-life-4-confirm.user.js
 - 5 自动商品合规: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temulife5-%E8%87%AA%E5%8A%A8%E5%95%86%E5%93%81%E5%90%88%E8%A7%84.user.js
 - 6 自动实拍图: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temulife6-%E8%87%AA%E5%8A%A8%E5%AE%9E%E6%8B%8D%E5%9B%BE.user.js
+- 7 批量拒绝核价: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temu-life-7-reject.user.js
 - TEMU商品信息抓取下载: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/TEMU%E5%95%86%E5%93%81%E4%BF%A1%E6%81%AF%E6%8A%93%E5%8F%96%E4%B8%8B%E8%BD%BD.user.js
 - TEMU商品列表导出: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/TEMU%E5%95%86%E5%93%81%E5%88%97%E8%A1%A8%E5%AF%BC%E5%87%BA.user.js
 - TEMU单店巡查脚本: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/TEMU%E5%8D%95%E5%BA%97%E5%B7%A1%E6%9F%A5%E8%84%9A%E6%9C%AC.user.js
@@ -65,7 +66,7 @@ ScriptCat 靠比较 `@version` 大小决定是否更新。若把日期式改成�
 
 ## 上游对比
 
-6 个生命周期脚本 fork/改造自 https://www.goldabcd.com/temu.html ，去掉了本地下载器依赖。上游现状、差异清单和重新对比的方法见 [UPSTREAM.md](UPSTREAM.md)。
+7 个生命周期脚本 fork/改造自 https://www.goldabcd.com/temu.html ，去掉了本地下载器依赖。上游现状、差异清单和重新对比的方法见 [UPSTREAM.md](UPSTREAM.md)。
 
 注意本仓库的 `@version` 与上游日期无对应关系，判断是否落后要看代码，不能看版本号。
 
@@ -75,9 +76,25 @@ ScriptCat 靠比较 `@version` 大小决定是否更新。若把日期式改成�
 
 半托店铺需要在“修改配置”里添加当前店铺，并打开半托开关。提交核价脚本还需要先导入阶梯核价 JSON，否则没有价格规则可用。
 
-6 个生命周期脚本都运行在 `https://agentseller.temu.com/newon/product-select*`。需要保持这个页面和浏览器打开；脚本会自行定时扫描，不需要手动刷新页面。关闭页面、休眠电脑或浏览器冻结后台标签后不会继续执行。
+7 个生命周期脚本都运行在 `https://agentseller.temu.com/newon/product-select*`。需要保持这个页面和浏览器打开；1-6 按各自启用状态定时扫描，第 7 个仅手动启动。关闭页面、休眠电脑或浏览器冻结后台标签后不会继续执行。
 
-共享配置和“运行日志”面板只由 `temu-life-1-price.user.js` 创建。生命周期 2-6 只向页面发送日志事件，所以未安装或停用生命周期 1 时，其他脚本仍能运行，但看不到共享日志面板。生命周期 1 `2026.0804.1` 起提供 `1` 至 `6` 的独立日志筛选；日志只保存在当前页面内存中，刷新或关闭页面会清空。
+共享配置和“运行日志”面板只由 `temu-life-1-price.user.js` 创建。生命周期 2-7 只向页面发送日志事件，所以未安装或停用生命周期 1 时，其他脚本仍能运行，但看不到共享日志面板。生命周期 1 `2026.0930.1` 起提供 `1` 至 `7` 的独立日志筛选；日志只保存在当前页面内存中，刷新或关闭页面会清空。
+
+### 7 批量拒绝核价（手动）
+
+1. 安装第 7 个脚本即可独立使用。需要“7 拒绝核价”日志筛选时，将第 1 个更新到 `2026.0930.1` 或更新版本。
+2. 打开“7、批量拒绝核价”，检查当前店铺及全托/半托类型。会读取第 1 个脚本保存的共享店铺配置；未配置默认全托，也可在面板手动选择。
+3. 输入次数下限，默认 `9`。**核价次数 ≥9 且待卖家确认**才进入清单，第 9 次包含在内，已生效/作废不处理。
+4. 点“扫描预览”，查看商品、核价单、次数；再点“确认拒绝”确认店铺和数量。执行前重新查询，只处理预览里状态、次数和 SKU 集合未变化的核价单，不处理新出现的单据。
+5. 可随时点“停止”。已发出的写请求等待返回，不会撤销；未发出的单据停止提交。执行结果区区分接口成功、复查不再待确认、跳过、失败、结果不明和未执行。失败或不明结果不自动重试，请到 TEMU 页面复查后重新扫描。
+
+第 7 个不比较价格、不读取阶梯报价规则、不自动修改标题，也不会定时启动。编号 7 是工具编号，不要求先完成实拍图。
+
+第 7 个独立执行，不暂停或干预第 1 个的自动报价。没有安装第 1 个也可使用，其面板仍显示本轮明细。
+
+第 1 个仅新增日志筛选并更新版本号，报价计算、调度和阶梯价配置均未改动。注意两个次数的含义不同：提交核价的“最大次数 8”会处理到第 8 次；拒绝核价的“≥9”从第 9 次开始。
+
+带版本号的副本保存在 `versions/`，稳定安装入口仍使用仓库根目录文件。发布时两份内容应一致，已装第 1 个的用户无需更换安装地址。验证方法和未实店验证项见 [批量拒绝核价验证记录](docs/batch-reject-validation.md)。
 
 `合规中心-实拍图-自改版` 不再依赖 `127.0.0.1:3000`，也不需要客户手写 JSON。
 
