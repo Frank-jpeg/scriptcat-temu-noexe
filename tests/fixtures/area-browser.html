@@ -1,0 +1,30 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>类目到货区域测试（模拟数据）</title>
+<style>body{font:16px/1.6 "Microsoft YaHei",sans-serif;background:#f5f6f8;margin:36px;color:#333}h1{font-size:22px}</style>
+<h1>类目到货区域测试</h1><p>所有请求为模拟数据，不连接 TEMU。</p>
+<script>
+localStorage.setItem('agentseller-mall-info-id', 'area-test-mall');
+window.fixture = { writes: [], reads: [], logs: [], hold: false, release: null, fail: false, rows: [
+    { productSkcId:'a',leafCatId:100,leafCatName:'帽子',cat4Name:'男士服装',expectReceiveAreaConfigType:3,canEditExpectReceiveArea:true },
+    { productSkcId:'b',leafCatId:200,leafCatName:'帽子',cat4Name:'女士服装',expectReceiveAreaConfigType:1,canEditExpectReceiveArea:true },
+    { productSkcId:'c',leafCatId:100,leafCatName:'帽子',cat4Name:'男士服装',expectReceiveAreaConfigType:1,canEditExpectReceiveArea:true },
+    { productSkcId:'d',leafCatId:300,leafCatName:'水杯',cat4Name:'家居',expectReceiveAreaConfigType:3,canEditExpectReceiveArea:true },
+    { productSkcId:'e',leafCatId:100,leafCatName:'帽子',cat4Name:'男士服装',expectReceiveAreaConfigType:3,canEditExpectReceiveArea:false }
+] };
+window.addEventListener('goldabcd-noexe-log-event', e => fixture.logs.push(e.detail));
+window.fetch = async (url, options) => {
+    const body = JSON.parse(options.body);
+    if (url.endsWith('/pageQuerySkcPickOutConfig')) {
+        fixture.reads.push(body);
+        const all = fixture.rows.filter(row => body.expectReceiveAreaConfigTypeList.includes(row.expectReceiveAreaConfigType));
+        return { ok:true, json:async()=>({success:true,result:{total:all.length,items:all.slice((body.pageNumber-1)*body.pageSize,body.pageNumber*body.pageSize)}}) };
+    }
+    if (url.endsWith('/editExpectReceiveArea')) {
+        fixture.writes.push(body);
+        if (fixture.hold) await new Promise(resolve => { fixture.release = resolve; });
+        if (fixture.fail) return {ok:true,json:async()=>({success:false,errorMsg:'模拟失败'})};
+        for(const row of fixture.rows)if(body.productSkcIdList.includes(row.productSkcId))row.expectReceiveAreaConfigType=body.exceptReceiveAreaConfigType;
+        return {ok:true,json:async()=>({success:true})};
+    }
+    throw new Error('模拟页面禁止其他请求');
+};
+</script><script src="/area.js"></script></html>

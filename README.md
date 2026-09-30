@@ -13,6 +13,7 @@ TEMU ScriptCat 自改版脚本，去掉本地下载器依赖，并支持 GitHub 
 - 5 自动商品合规: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temulife5-%E8%87%AA%E5%8A%A8%E5%95%86%E5%93%81%E5%90%88%E8%A7%84.user.js
 - 6 自动实拍图: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temulife6-%E8%87%AA%E5%8A%A8%E5%AE%9E%E6%8B%8D%E5%9B%BE.user.js
 - 7 批量自动拒绝核价: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temu-life-7-reject.user.js
+- 8 按类目自动设置到货区域: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temu-life-8-area.user.js
 - TEMU商品信息抓取下载: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/TEMU%E5%95%86%E5%93%81%E4%BF%A1%E6%81%AF%E6%8A%93%E5%8F%96%E4%B8%8B%E8%BD%BD.user.js
 - TEMU商品列表导出: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/TEMU%E5%95%86%E5%93%81%E5%88%97%E8%A1%A8%E5%AF%BC%E5%87%BA.user.js
 - TEMU单店巡查脚本: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/TEMU%E5%8D%95%E5%BA%97%E5%B7%A1%E6%9F%A5%E8%84%9A%E6%9C%AC.user.js
@@ -66,7 +67,7 @@ ScriptCat 靠比较 `@version` 大小决定是否更新。若把日期式改成�
 
 ## 上游对比
 
-7 个生命周期脚本 fork/改造自 https://www.goldabcd.com/temu.html ，去掉了本地下载器依赖。上游现状、差异清单和重新对比的方法见 [UPSTREAM.md](UPSTREAM.md)。
+8 个生命周期脚本 fork/改造自 https://www.goldabcd.com/temu.html ，去掉了本地下载器依赖。上游现状、差异清单和重新对比的方法见 [UPSTREAM.md](UPSTREAM.md)。
 
 注意本仓库的 `@version` 与上游日期无对应关系，判断是否落后要看代码，不能看版本号。
 
@@ -76,9 +77,23 @@ ScriptCat 靠比较 `@version` 大小决定是否更新。若把日期式改成�
 
 半托店铺需要在“修改配置”里添加当前店铺，并打开半托开关。提交核价脚本还需要先导入阶梯核价 JSON，否则没有价格规则可用。
 
-7 个生命周期脚本都运行在 `https://agentseller.temu.com/newon/product-select*`。需要保持这个页面和浏览器打开；1-6 按各自启用状态定时扫描，第 7 个启用后自动循环并记住启用状态。关闭页面、休眠电脑或浏览器冻结后台标签后不会继续执行。
+8 个生命周期脚本都运行在 `https://agentseller.temu.com/newon/product-select*`。需要保持这个页面和浏览器打开；1-6 按各自启用状态定时扫描，第 7、8 个启用后自动循环并记住启用状态。关闭页面、休眠电脑或浏览器冻结后台标签后不会继续执行。
 
-共享配置和“运行日志”面板只由 `temu-life-1-price.user.js` 创建。生命周期 2-7 只向页面发送日志事件，所以未安装或停用生命周期 1 时，其他脚本仍能运行，但看不到共享日志面板。生命周期 1 `2026.0930.1` 起提供 `1` 至 `7` 的独立日志筛选；日志只保存在当前页面内存中，刷新或关闭页面会清空。
+共享配置和“运行日志”面板只由 `temu-life-1-price.user.js` 创建。生命周期 2-8 只向页面发送日志事件，所以未安装或停用生命周期 1 时，其他脚本仍能运行，但看不到共享日志面板。生命周期 1 `2026.0930.2` 起提供 `1` 至 `8` 的独立日志筛选；日志只保存在当前页面内存中，刷新或关闭页面会清空。
+
+### 8 按类目自动设置到货区域
+
+1. 安装第 8 个，打开上新生命周期页面，点击外部按钮展开面板。首次默认关闭。
+2. 点“读取店铺类目”，按名称选择广东或义乌。按末级类目 ID 精确匹配，用户不需要填写 ID；同名条目附带所属四级类目供区分。“不设置”的类目不修改。
+3. 输入模板名称，点击“保存模板”。可保存多套规则；在“已保存模板”下拉中切换，用“新建模板”新建一套。
+4. 选择模板后点“开始”：立即处理一轮，每轮结束 1 分钟再查。点“暂停”停止后续批次，模板保留。改规则后需先保存模板再开始。
+5. 规则、模板选择和开关按店铺保存在 `goldabcd_category_area_v1:<mallId>`，不修改 1-7 配置。刷新时已开启的模板 5 秒后自动恢复。外部按钮显示开启、运行或关闭状态。
+
+只修改“区域与规则不一致、且允许编辑”的 SKC，广东/义乌分组，每批最多 50 个，间隔 2 秒。接口失败或结果不明时暂停，不自动重试写请求。这里只修改期望区域，不保证实际仓库分配。
+
+**10000 条查询上限：**读取类目时分当前区域查询，每个来源窗口最多 10000 条；超出时提示类目列表可能不完整。运行时按目标区域查询相反区域及就近推荐，成功修改的商品下一轮退出查询，从而逐步处理后续数据。如果前 10000 条均为未配置/不可编辑商品，后续数据仍可能被挡住；界面会提示“仍有未覆盖数据”，不会显示全部完成。
+
+第 1 个仅增加“8 到货区域”日志筛选，版本 `2026.0930.2`，报价业务不变。第 8 个可独立运行；更新第 1 个可在共享日志中按 8 筛选。验证细节见 [生命周期 8 验证记录](docs/category-area-validation.md)。
 
 ### 7 批量自动拒绝核价
 

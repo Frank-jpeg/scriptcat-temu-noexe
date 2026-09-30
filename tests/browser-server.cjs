@@ -7,13 +7,18 @@ const root = path.resolve(__dirname, '..');
 const files = {
     '/newon/product-select': path.join(__dirname, 'fixtures/price-browser.html'),
     '/price.js': path.join(root, 'temu-life-1-price.user.js'),
-    '/reject.js': path.join(root, 'temu-life-7-reject.user.js')
+    '/reject.js': path.join(root, 'temu-life-7-reject.user.js'),
+    '/area.js': path.join(root, 'temu-life-8-area.user.js')
 };
 const server = http.createServer((req, res) => {
     const pathname = new URL(req.url, 'http://localhost').pathname;
     if (!files[pathname]) { res.writeHead(404).end(); return; }
     res.setHeader('Content-Type', pathname.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'text/html; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
-    res.end(fs.readFileSync(files[pathname]));
+    let content = fs.readFileSync(files[pathname]);
+    if (pathname === '/newon/product-select' && new URL(req.url, 'http://localhost').searchParams.has('area')) {
+        content = fs.readFileSync(path.join(__dirname, 'fixtures/area-browser.html'));
+    }
+    res.end(content);
 });
 server.listen(0, '127.0.0.1', () => console.log('http://127.0.0.1:' + server.address().port + '/newon/product-select'));
