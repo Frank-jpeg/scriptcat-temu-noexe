@@ -10,7 +10,7 @@ const assert = require('node:assert/strict');
     const base = await new Promise((resolve, reject) => { server.stdout.once('data', d => resolve(String(d).trim())); server.once('error', reject); });
     browser = await chromium.launch({ headless: true });
     for (const name of ['8', '7']) {
-      const interval = name === '8' ? 7200000 : 60000;
+      const interval = 21600000;
       const key = name === '8' ? 'goldabcd_category_area_v1:area-test-mall' : 'goldabcd_auto_reject_v1:test-mall';
       for (const mode of ['network', 'body-network', 'timeout', '503', 'write', 'auth', 'malformed', 'stop', ...(name === '7' ? ['verification'] : [])]) {
         const context = await browser.newContext();

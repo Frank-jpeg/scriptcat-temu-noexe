@@ -6,10 +6,10 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '..');
 const cases = [
-  { name: '8', intervalMs: 7200000, waitText: '2 小时', fixture: 'area-browser.html', host: '#goldabcd-category-area-host', key: 'goldabcd_category_area_v1:area-test-mall',
+  { name: '8', intervalMs: 21600000, waitText: '6 小时', fixture: 'area-browser.html', host: '#goldabcd-category-area-host', key: 'goldabcd_category_area_v1:area-test-mall',
     settings: { schemaVersion: 2, enabled: false, rules: { 100: { name: '帽子', area: 1 } } },
     writePath: '/editExpectReceiveArea', completed: () => fixture.writes.length > 0 },
-  { name: '7', intervalMs: 60000, waitText: '1 分钟', fixture: 'price-browser.html', host: '#goldabcd-reject-price-host', key: 'goldabcd_auto_reject_v1:test-mall',
+  { name: '7', intervalMs: 21600000, waitText: '6 小时', fixture: 'price-browser.html', host: '#goldabcd-reject-price-host', key: 'goldabcd_auto_reject_v1:test-mall',
     writePath: '/no-bom/review', completed: () => fixture.rejected.size > 0 }
 ];
 

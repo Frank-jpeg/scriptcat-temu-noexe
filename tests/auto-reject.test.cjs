@@ -11,7 +11,7 @@ function setup(run) {
     return { loop, timers, errors, fire() { const [id, timer] = timers.entries().next().value; timers.delete(id); return timer.callback(); } };
 }
 
-test('首次不自动启动；启用立即运行，之后每轮结束 60 秒继续，无需确认', async () => {
+test('首次不自动启动；启用立即运行，之后每轮结束 6 小时继续，无需确认', async () => {
     let calls = 0;
     const h = setup(async () => { calls++; });
     assert.equal(h.timers.size, 0);
@@ -20,7 +20,7 @@ test('首次不自动启动；启用立即运行，之后每轮结束 60 秒继�
     assert.equal([...h.timers.values()][0].ms, 0);
     await h.fire();
     assert.equal(calls, 1);
-    assert.equal([...h.timers.values()][0].ms, 60000);
+    assert.equal([...h.timers.values()][0].ms, 21600000);
     await h.fire();
     assert.equal(calls, 2);
     h.loop.stop();
