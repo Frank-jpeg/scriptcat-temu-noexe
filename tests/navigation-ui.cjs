@@ -6,10 +6,10 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '..');
 const cases = [
-  { name: '8', fixture: 'area-browser.html', host: '#goldabcd-category-area-host', key: 'goldabcd_category_area_v1:area-test-mall',
+  { name: '8', intervalMs: 7200000, waitText: '2 小时', fixture: 'area-browser.html', host: '#goldabcd-category-area-host', key: 'goldabcd_category_area_v1:area-test-mall',
     settings: { schemaVersion: 2, enabled: false, rules: { 100: { name: '帽子', area: 1 } } },
     writePath: '/editExpectReceiveArea', completed: () => fixture.writes.length > 0 },
-  { name: '7', fixture: 'price-browser.html', host: '#goldabcd-reject-price-host', key: 'goldabcd_auto_reject_v1:test-mall',
+  { name: '7', intervalMs: 60000, waitText: '1 分钟', fixture: 'price-browser.html', host: '#goldabcd-reject-price-host', key: 'goldabcd_auto_reject_v1:test-mall',
     writePath: '/no-bom/review', completed: () => fixture.rejected.size > 0 }
 ];
 
@@ -99,16 +99,18 @@ const cases = [
       assert.equal(await enabled(), true);
       await page.waitForFunction(c.completed, null, { timeout: 12000 });
       // 验证正常完成后还会自动安排下一轮（只快进测试页面的时钟）。
-      await host.locator('.status').filter({ hasText: '1 分钟' }).waitFor();
+      await host.locator('.status').filter({ hasText: c.waitText }).waitFor();
       await host.locator('.stop').click();
       await page.clock.install();
       const before = await page.evaluate(() => fixture.calls ? fixture.calls.length : fixture.reads.length);
       await host.locator('.enable').click();
       await page.clock.runFor(100);
-      await host.locator('.status').filter({ hasText: '1 分钟' }).waitFor();
+      await host.locator('.status').filter({ hasText: c.waitText }).waitFor();
       const afterFirst = await page.evaluate(() => fixture.calls ? fixture.calls.length : fixture.reads.length);
       assert.ok(afterFirst > before);
-      await page.clock.fastForward(60000);
+      await page.clock.fastForward(c.intervalMs - 1000);
+      assert.equal(await page.evaluate(() => fixture.calls ? fixture.calls.length : fixture.reads.length), afterFirst, '间隔未到不能提前开始下一轮');
+      await page.clock.fastForward(1000);
       assert.ok(await page.evaluate(() => fixture.calls ? fixture.calls.length : fixture.reads.length) > afterFirst);
       assert.deepEqual(errors, []);
       console.log(c.name + ' PASS: 查询中/写入中刷新无弹窗、开关保留、自动恢复、手动暂停及真实异常仍关闭、缓存返回、持续循环');
