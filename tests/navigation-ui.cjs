@@ -74,8 +74,8 @@ const cases = [
         await page.reload();
         assert.equal(await enabled(), false, '手动暂停后刷新必须保持关闭');
       }
-      // 非导航导致的网络失败仍然保存停用。
-      await page.evaluate(() => { window.fetch = async () => { throw new TypeError('模拟真实网络失败'); }; });
+      // 非导航导致的业务失败仍然保存停用。
+      await page.evaluate(() => { window.fetch = async () => ({ ok: true, json: async () => ({ success: false, errorMsg: '模拟业务失败' }) }); });
       await host.locator('.open').click(); await host.locator('.enable').click();
       await host.locator('.status').filter({ hasText: '已暂停' }).waitFor();
       assert.equal(await enabled(), false);
@@ -113,7 +113,7 @@ const cases = [
       await page.clock.fastForward(1000);
       assert.ok(await page.evaluate(() => fixture.calls ? fixture.calls.length : fixture.reads.length) > afterFirst);
       assert.deepEqual(errors, []);
-      console.log(c.name + ' PASS: 查询中/写入中刷新无弹窗、开关保留、自动恢复、手动暂停及真实异常仍关闭、缓存返回、持续循环');
+      console.log(c.name + ' PASS: 查询中/写入中刷新无弹窗、开关保留、自动恢复、手动暂停及业务失败仍关闭、缓存返回、持续循环');
       await context.close();
     }
   } finally {
