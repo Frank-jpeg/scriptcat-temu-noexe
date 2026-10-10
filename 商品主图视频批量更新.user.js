@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         商品主图视频批量更新
 // @namespace    lan.temu.main-video-fill
-// @version      1.3.1
-// @description  扫描缺少视频的 TEMU 商品，批量补主图视频，并可选择同时补空缺的详情视频。
+// @version      1.5.1
+// @description  沿用网页查询后的分类、状态、货号、语言等条件及每页条数，每页扫描后立即提交空缺视频；预览为可选项。
 // @author       Lan
 // @match        https://agentseller.temu.com/material/image-task*
 // @match        https://agentseller.temu.com/material/*
 // @updateURL    https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/%E5%95%86%E5%93%81%E4%B8%BB%E5%9B%BE%E8%A7%86%E9%A2%91%E6%89%B9%E9%87%8F%E6%9B%B4%E6%96%B0.user.js
 // @downloadURL  https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/%E5%95%86%E5%93%81%E4%B8%BB%E5%9B%BE%E8%A7%86%E9%A2%91%E6%89%B9%E9%87%8F%E6%9B%B4%E6%96%B0.user.js
-// @run-at       document-idle
+// @run-at       document-start
 // @grant        none
 // @noframes
 // ==/UserScript==
@@ -16,7 +16,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.3.1';
+  const VERSION = '1.5.1';
   const APP_ID = 'temu-main-video-fill-v1';
   const LIST_PAGE_SIZE = 20;
   const VIDEO_QUERY_BATCH_SIZE = 20;
@@ -217,12 +217,246 @@
     return Array.from(new Set(ids.filter((id) => /^\d+$/.test(id))));
   }
 
+
+  function parseCategoryFilter(value) {
+    return Array.from(new Set(String(value || '').split(/[,，;；\r\n]+/).map((item) => item.trim()).filter(Boolean)));
+  }
+
+  function readLeafCategory(cat) {
+    if (!cat || typeof cat !== 'object') return null;
+    const id = String(cat.catId ?? '');
+    if (!/^[1-9]\d*$/.test(id)) return null;
+    const path = [];
+    for (let level = 1; level <= 10; level += 1) {
+      const levelId = String(cat[`cat${level}`] ?? '');
+      const rawName = cat[`cat${level}Name`];
+      const name = typeof rawName === 'string' ? rawName.trim() : '';
+      if (levelId === '' || levelId === '0') {
+        if (name) return null;
+        continue;
+      }
+      if (!/^[1-9]\d*$/.test(levelId) || !name) return null;
+      path.push({ id: levelId, name, level });
+    }
+    const leaf = path[path.length - 1];
+    if (!leaf || leaf.id !== id) return null;
+    return { id, name: leaf.name, nodes: path, path: path.map((item) => item.name).join(' > ') };
+  }
+
+  // 分类仅来自该 SPU 自己的任务；不继承相邻行、上一页或别的商品的分类。
+  function extractCategorizedProducts(rows) {
+    const byId = new Map();
+    const getEntry = (value) => {
+      const id = String(value ?? '');
+      if (!/^[1-9]\d*$/.test(id) || !Number.isSafeInteger(Number(id))) return null;
+      if (!byId.has(id)) byId.set(id, { productId: id, categories: new Map(), invalid: false });
+      return byId.get(id);
+    };
+    for (const row of (Array.isArray(rows) ? rows : [])) {
+      const parent = getEntry(row?.productId);
+      const tasks = Array.isArray(row?.taskList) ? row.taskList : [];
+      if (!tasks.length && parent) parent.invalid = true;
+      for (const task of tasks) {
+        const entry = getEntry(task?.productId);
+        if (!entry) { if (parent) parent.invalid = true; continue; }
+        if (parent && parent.productId !== entry.productId) {
+          parent.invalid = true; entry.invalid = true;
+        }
+        const category = readLeafCategory(task?.cat);
+        if (!category) entry.invalid = true;
+        else entry.categories.set(`${category.id}\n${category.name}`, category);
+      }
+    }
+    return Array.from(byId.values(), (entry) => ({
+      productId: entry.productId,
+      category: !entry.invalid && entry.categories.size === 1 ? entry.categories.values().next().value : null,
+      categoryIssue: entry.invalid ? '分类缺失或商品归属异常' : (entry.categories.size !== 1 ? '同一 SPU 分类冲突' : ''),
+    }));
+  }
+
+  function matchesCategory(product, allowed) {
+    const category = product?.category;
+    return Boolean(category && Array.isArray(allowed) && allowed.length
+      && allowed.some((item) => item === category.name || item === category.id));
+  }
+
+  function buildCategoryEditRequest(product, media, options, allowed) {
+    if (!matchesCategory(product, allowed)) throw new Error(`SPU ${product?.productId || '-'} 不在指定类目内，禁止提交`);
+    return buildEditRequest([product.productId], media, options);
+  }
+
+  const SEARCH_KEYS = Object.freeze([
+    ...Array.from({ length: 10 }, (_, index) => `cat${index + 1}Id`),
+    'isFirstAuditPass', 'startCreatedAt', 'endCreatedAt', 'productCode', 'isNeedModelShot',
+    'productSkcIdList', 'productIdList', 'taskTypeList', 'languageList', 'taskMergedStatus', 'hasTagCode', 'pageInfo',
+  ]);
+
+  function normalizeSearchPayload(value) {
+    const body = typeof value === 'string' ? JSON.parse(value) : value;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('未取得网页查询参数');
+    const unknown = Object.keys(body).filter((key) => !SEARCH_KEYS.includes(key));
+    if (unknown.length) throw new Error('网页查询参数有新字段，请更新脚本后再使用');
+    const copied = JSON.parse(JSON.stringify(body));
+    const info = copied.pageInfo;
+    if (!info || !Number.isSafeInteger(info.pageNo) || info.pageNo < 1
+      || !Number.isSafeInteger(info.pageSize) || info.pageSize < 1 || info.pageSize > 200) {
+      throw new Error('未取得网页分页参数');
+    }
+    return copied;
+  }
+
+  function searchFingerprint(body) {
+    const value = normalizeSearchPayload(body);
+    delete value.pageInfo.pageNo;
+    return JSON.stringify(SEARCH_KEYS.filter((key) => key in value).map((key) => [key, value[key]]));
+  }
+
+  function getSearchCategories(body) {
+    return Array.from({ length: 10 }, (_, i) => ({ level: i + 1, id: String(body?.[`cat${i + 1}Id`] ?? '') }))
+      .filter((item) => /^[1-9]\d*$/.test(item.id));
+  }
+
+  function buildSearchPageRequest(scope, pageNo) {
+    const body = normalizeSearchPayload(scope?.body);
+    if (!getSearchCategories(body).length) throw new Error('请先在网页选择商品分类并点击查询');
+    if (!Number.isSafeInteger(pageNo) || pageNo < 1) throw new Error('页码无效');
+    body.pageInfo.pageNo = pageNo;
+    return body;
+  }
+
+  function matchesSearchProduct(product, allowed, scope) {
+    const categories = getSearchCategories(scope?.body);
+    return Boolean(product?.category && categories.length
+      && categories.every((wanted) => product.category.nodes?.some((node) => node.level === wanted.level && node.id === wanted.id))
+      && (!allowed.length || matchesCategory(product, allowed)));
+  }
+
+  function buildScopedEditRequest(product, media, options, allowed, scope) {
+    if (!matchesSearchProduct(product, allowed, scope)) throw new Error(`SPU ${product?.productId || '-'} 不属于本次网页筛选类目，禁止提交`);
+    return buildEditRequest([product.productId], media, options);
+  }
+
+  // 被动记录网页自己的查询；只记录这个列表接口的 JSON 参数、总数和店铺标识。
+  // 脚本分页使用保存的原始 fetch，避免把自己的查询误认成用户更改条件。
+  function createPageSearchTracker(env) {
+    const nativeFetch = env.fetch;
+    const listeners = new Set();
+    let sequence = 0;
+    let current = { status: 'empty', message: '请先在网页选择商品分类，再点击网页“查询”' };
+    const notify = () => { for (const listener of listeners) { try { listener(current); } catch (_) {} } };
+    const isTarget = (url, method) => {
+      try {
+        const parsed = new URL(url, env.location.href);
+        return parsed.origin === env.location.origin && parsed.pathname === API.productPage && String(method || 'GET').toUpperCase() === 'POST';
+      } catch (_) { return false; }
+    };
+    const begin = () => {
+      const id = ++sequence;
+      current = { status: 'pending', message: '正在读取网页查询条件，请等待列表加载完成' };
+      notify();
+      return id;
+    };
+    const fail = (id, message) => {
+      if (id !== sequence) return;
+      current = { status: 'error', message };
+      notify();
+    };
+    const complete = (id, rawBody, data, ok, mallId) => {
+      if (id !== sequence) return;
+      try {
+        const body = normalizeSearchPayload(rawBody);
+        if (!ok || data?.success === false || (data?.errorCode != null && ![0, 1000000].includes(Number(data.errorCode)))) throw new Error('网页查询失败，请重新点击查询');
+        const result = getResponseResult(data);
+        if (!Array.isArray(result?.detailList) || !Number.isFinite(Number(result.total)) || Number(result.total) < 0) throw new Error('网页列表返回不完整，请重新查询');
+        if (!mallId) throw new Error('未取得本次网页查询的店铺标识，请刷新后重试');
+        if (!getSearchCategories(body).length) throw new Error('未选择商品分类；请先在网页选分类并点击查询');
+        const cat = result.detailList[0]?.taskList?.[0]?.cat;
+        const categoryLabel = getSearchCategories(body).map((item) =>
+          String(cat?.[`cat${item.level}`]) === item.id ? cat[`cat${item.level}Name`] : `类目 ${item.id}`).join(' / ');
+        current = { status: 'ready', body, categoryLabel, total: Number(result.total), mallId: String(mallId), key: searchFingerprint(body), capturedAt: Date.now() };
+        notify();
+      } catch (error) { fail(id, error.message); }
+    };
+    const wrappedFetch = function (input, init) {
+      const url = typeof input === 'string' || input instanceof URL ? String(input) : input?.url;
+      const method = init?.method || input?.method || 'GET';
+      if (!isTarget(url, method)) return nativeFetch.apply(this, arguments);
+      const id = begin();
+      let bodyPromise, mallId;
+      try {
+        bodyPromise = init?.body !== undefined ? Promise.resolve(init.body) : input.clone().text();
+        // Attach a rejection handler immediately; never consume the original Request body.
+        bodyPromise = bodyPromise.then((value) => ({ value }), () => ({ error: true }));
+        mallId = new Headers(init?.headers !== undefined ? init.headers : input?.headers).get('Mallid');
+      } catch (_) { bodyPromise = Promise.resolve({ error: true }); }
+      let pending;
+      try { pending = nativeFetch.apply(this, arguments); }
+      catch (error) { fail(id, '网页查询未能发送，请重试'); throw error; }
+      Promise.resolve(pending).then(async (response) => {
+        const responseCopy = response.clone();
+        const raw = await bodyPromise;
+        if (raw.error) throw new Error('无法读取网页查询参数');
+        complete(id, raw.value, await responseCopy.json(), response.ok, mallId);
+      }).catch(() => fail(id, '无法读取网页查询，请再次点击网页“查询”'));
+      return pending;
+    };
+    env.fetch = wrappedFetch;
+    const xhrMeta = new WeakMap();
+    const proto = env.XMLHttpRequest?.prototype;
+    let restoreXhr = () => {};
+    if (proto) {
+      const nativeOpen = proto.open, nativeSend = proto.send, nativeSetHeader = proto.setRequestHeader;
+      proto.open = function (method, url) {
+        xhrMeta.set(this, { target: isTarget(url, method), mallId: '' });
+        return nativeOpen.apply(this, arguments);
+      };
+      proto.setRequestHeader = function (name, value) {
+        const meta = xhrMeta.get(this);
+        if (meta?.target && String(name).toLowerCase() === 'mallid') meta.mallId = String(value);
+        return nativeSetHeader.apply(this, arguments);
+      };
+      proto.send = function (body) {
+        const meta = xhrMeta.get(this);
+        if (meta?.target) {
+          const id = begin();
+          this.addEventListener('loadend', () => {
+            try {
+              const data = this.responseType === 'json' ? this.response : JSON.parse(this.responseText);
+              complete(id, body, data, this.status >= 200 && this.status < 300, meta.mallId);
+            } catch (_) { fail(id, '无法读取网页查询，请再次点击网页“查询”'); }
+          }, { once: true });
+        }
+        return nativeSend.apply(this, arguments);
+      };
+      const wrappedOpen = proto.open, wrappedSend = proto.send, wrappedHeader = proto.setRequestHeader;
+      restoreXhr = () => {
+        if (proto.open === wrappedOpen) proto.open = nativeOpen;
+        if (proto.send === wrappedSend) proto.send = nativeSend;
+        if (proto.setRequestHeader === wrappedHeader) proto.setRequestHeader = nativeSetHeader;
+      };
+    }
+    return {
+      fetch: nativeFetch.bind(env),
+      getCurrent: () => current,
+      getRevision: () => sequence,
+      subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
+      snapshot: () => {
+        if (current.status !== 'ready') throw new Error(current.message);
+        return JSON.parse(JSON.stringify(current));
+      },
+      dispose: () => { if (env.fetch === wrappedFetch) env.fetch = nativeFetch; restoreXhr(); listeners.clear(); },
+    };
+  }
+
+
   function makeCsv(rows) {
     const escape = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
     return [
-      ['SPU', '主图视频状态', '详情视频状态', '处理结果'],
+      ['SPU', '货品分类', '类目ID', '主图视频状态', '详情视频状态', '处理结果'],
       ...rows.map((row) => [
         row.productId,
+        row.category?.name || '',
+        row.category?.id || '',
         row.mainVideoStatus || '为空',
         row.detailVideoStatus || '未检测',
         row.result || '待更新',
@@ -297,6 +531,13 @@
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
       buildEditRequest,
+      buildCategoryEditRequest,
+      normalizeSearchPayload, searchFingerprint, getSearchCategories, buildSearchPageRequest,
+      matchesSearchProduct, buildScopedEditRequest, createPageSearchTracker,
+      parseCategoryFilter,
+      readLeafCategory,
+      extractCategorizedProducts,
+      matchesCategory,
       buildMaterialCreateRequest,
       buildMaterialEditRequest,
       buildMaterialMd5Query,
@@ -317,6 +558,12 @@
     return;
   }
 
+  const trackerKey = '__temuMainVideoSearchTrackerV151';
+  if (window[trackerKey]) return;
+  const pageSearch = createPageSearchTracker(window);
+  window[trackerKey] = pageSearch;
+
+  function mountApp() {
   if (document.getElementById(APP_ID)) return;
 
   const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -332,8 +579,15 @@
     missingRows: [],
     media: null,
     includeDetail: false,
+    allowedCategories: [],
+    previewOnly: false,
+    taskMallId: '',
+    mediaMallId: '',
+    searchScope: null,
+    scopeInvalidated: false,
+    syncingSearch: false,
     logs: [],
-    stats: { scanned: 0, missing: 0, existing: 0, success: 0, skipped: 0, failed: 0 },
+    stats: { scanned: 0, missing: 0, existing: 0, success: 0, skipped: 0, failed: 0, categoryMatched: 0, categorySkipped: 0, categoryUnknown: 0 },
   };
 
   const style = document.createElement('style');
@@ -358,6 +612,11 @@
     #${APP_ID} .tmvf-file { min-width: 0; min-height: 38px; padding: 8px 10px; border: 1px solid #d7dbe0; border-radius: 5px; background: #f8f9fa; }
     #${APP_ID} .tmvf-file-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 700; }
     #${APP_ID} .tmvf-file-meta { display: block; margin-top: 2px; color: #737980; font-size: 11px; }
+    #${APP_ID} .tmvf-category { margin-bottom: 12px; font-size: 12px; }
+    #${APP_ID} .tmvf-category label { display: block; margin-bottom: 6px; font-weight: 700; }
+    #${APP_ID} .tmvf-category-input { width: 100%; padding: 9px 10px; border: 1px solid #a8b9cf; border-radius: 5px; }
+    #${APP_ID} .tmvf-hint { margin-top: 6px; color: #687078; font-size: 11px; line-height: 1.5; }
+    #${APP_ID} .tmvf-category-summary { margin: 7px 0 12px; padding: 8px; background: #eef5ff; color: #1455ad; font-size: 11px; line-height: 1.5; }
     #${APP_ID} .tmvf-option { display: flex; align-items: center; gap: 8px; min-height: 34px; margin: -4px 0 10px; color: #3f454c; font-size: 12px; cursor: pointer; }
     #${APP_ID} .tmvf-option input { width: 16px; height: 16px; margin: 0; accent-color: #1769e0; }
     #${APP_ID} .tmvf-option input:disabled + span { color: #8b9096; }
@@ -414,6 +673,17 @@
             <div class="tmvf-step" data-step="filter">3 检测</div>
             <div class="tmvf-step" data-step="update">4 更新</div>
           </div>
+          <div class="tmvf-search-summary tmvf-category-summary" role="status">请先在网页选择商品分类，再点击网页“查询”</div>
+          <details class="tmvf-category"><summary style="cursor:pointer;font-size:12px;margin-bottom:8px">额外类目限制（可选）</summary>
+            <label for="tmvf-category-input">额外限制末级类目（选填）</label>
+            <input id="tmvf-category-input" class="tmvf-category-input" type="text" autocomplete="off" placeholder="通常留空，直接使用网页搜索范围">
+            <div class="tmvf-hint">留空即按网页已查询的分类处理。如需进一步缩小范围，可填写完整末级名称或 ID，逗号分隔。</div>
+          </details>
+          <label class="tmvf-option">
+            <input class="tmvf-preview-only" type="checkbox">
+            <span>仅预览，不提交（可选，默认关闭）</span>
+          </label>
+          <div class="tmvf-hint" style="margin-bottom:12px">开始前自动重新查询网页，随后锁定全部条件。每页检测完成后立即补空缺视频，再读取下一页；运行中请勿更改网页筛选。</div>
           <div class="tmvf-file-row">
             <div class="tmvf-file">
               <span class="tmvf-file-name">尚未选择视频</span>
@@ -437,6 +707,7 @@
             <div class="tmvf-stat"><strong data-stat="skipped">0</strong><span>跳过</span></div>
             <div class="tmvf-stat"><strong data-stat="failed">0</strong><span>失败</span></div>
           </div>
+          <div class="tmvf-category-summary">类目符合 <strong data-stat="categoryMatched">0</strong> · 其他类目 <strong data-stat="categorySkipped">0</strong> · 分类不明/冲突 <strong data-stat="categoryUnknown">0</strong></div>
           <div class="tmvf-actions">
             <button class="tmvf-btn tmvf-upload" type="button" disabled>上传视频</button>
             <button class="tmvf-btn tmvf-primary tmvf-scan" type="button" disabled>请先上传视频</button>
@@ -448,7 +719,7 @@
           </div>
           <div class="tmvf-section-head"><span>待补视频商品</span><span class="tmvf-count">0 个</span></div>
           <div class="tmvf-table-wrap">
-            <table><thead><tr><th style="width:31%">SPU</th><th style="width:20%">主图</th><th style="width:20%">详情</th><th>结果</th></tr></thead><tbody class="tmvf-tbody"><tr><td class="tmvf-empty" colspan="4">尚未扫描</td></tr></tbody></table>
+            <table><thead><tr><th style="width:25%">SPU</th><th style="width:25%">货品分类</th><th style="width:15%">主图</th><th style="width:15%">详情</th><th>结果</th></tr></thead><tbody class="tmvf-tbody"><tr><td class="tmvf-empty" colspan="5">尚未扫描</td></tr></tbody></table>
           </div>
           <div class="tmvf-section-head"><span>运行日志</span><button class="tmvf-icon tmvf-clear-log" type="button" title="清空日志" aria-label="清空日志">&times;</button></div>
           <div class="tmvf-log" role="log" aria-live="polite"><div class="tmvf-log-line">等待开始</div></div>
@@ -461,6 +732,8 @@
   const el = {
     launch: root.querySelector('.tmvf-launch'), panel: root.querySelector('.tmvf-panel'), close: root.querySelector('.tmvf-close'),
     pick: root.querySelector('.tmvf-pick'), fileInput: root.querySelector('.tmvf-file-input'), fileName: root.querySelector('.tmvf-file-name'), fileMeta: root.querySelector('.tmvf-file-meta'), includeDetail: root.querySelector('.tmvf-include-detail'),
+    searchSummary: root.querySelector('.tmvf-search-summary'),
+    categoryInput: root.querySelector('.tmvf-category-input'), previewOnly: root.querySelector('.tmvf-preview-only'),
     stage: root.querySelector('.tmvf-stage'), percent: root.querySelector('.tmvf-percent'), track: root.querySelector('.tmvf-track'), bar: root.querySelector('.tmvf-bar'), current: root.querySelector('.tmvf-current'),
     scan: root.querySelector('.tmvf-scan'), upload: root.querySelector('.tmvf-upload'), export: root.querySelector('.tmvf-export'), pause: root.querySelector('.tmvf-pause'), stop: root.querySelector('.tmvf-stop'),
     tbody: root.querySelector('.tmvf-tbody'), count: root.querySelector('.tmvf-count'), log: root.querySelector('.tmvf-log'), clearLog: root.querySelector('.tmvf-clear-log'),
@@ -491,7 +764,7 @@
       headers.set('Mallid', getMallId());
       if (options.json !== undefined) headers.set('Content-Type', 'application/json');
       try {
-        const response = await fetch(url, {
+        const response = await pageSearch.fetch(url, {
           method: options.method || 'POST',
           credentials: 'include',
           headers,
@@ -505,6 +778,7 @@
         if (!response.ok) throw new Error(firstField(json, ['errorMsg', 'error_msg', 'message']) || `HTTP ${response.status}`);
         return assertApiResponse(json, url);
       } catch (error) {
+        if (state.scopeInvalidated) throw new Error('网页搜索范围已变化，已中止后续处理；请重新查询后再开始');
         if (state.stopped || error.name === 'AbortError') throw new Error('任务已停止');
         lastError = error;
         if (attempt === retries || /^HTTP 4(?!29)/.test(error.message)) break;
@@ -515,6 +789,8 @@
   }
 
   function startTask(phase) {
+    state.taskMallId = getMallId();
+    state.scopeInvalidated = false;
     state.phase = phase;
     state.running = true;
     state.paused = false;
@@ -532,7 +808,9 @@
   }
 
   function checkStopped() {
+    if (state.scopeInvalidated) throw new Error('网页搜索范围已变化，已中止后续处理；请重新查询后再开始');
     if (state.stopped) throw new Error('任务已停止');
+    if (state.running && state.taskMallId !== getMallId()) throw new Error('店铺已切换，任务中止；请在当前店铺重新上传并扫描');
   }
 
   async function checkpoint() {
@@ -570,13 +848,13 @@
     el.count.textContent = `${state.missingRows.length} 个`;
     el.export.disabled = state.missingRows.length === 0;
     if (!state.missingRows.length) {
-      el.tbody.innerHTML = '<tr><td class="tmvf-empty" colspan="4">没有需要补视频的商品</td></tr>';
+      el.tbody.innerHTML = '<tr><td class="tmvf-empty" colspan="5">没有需要补视频的商品</td></tr>';
       return;
     }
     const fragment = document.createDocumentFragment();
     for (const row of state.missingRows) {
       const tr = document.createElement('tr');
-      for (const value of [row.productId, row.mainVideoStatus || '为空', row.detailVideoStatus || '未检测', row.result || '待更新']) {
+      for (const value of [row.productId, row.category?.name || '未知', row.mainVideoStatus || '为空', row.detailVideoStatus || '未检测', row.result || '待更新']) {
         const td = document.createElement('td'); td.textContent = value; td.title = value; tr.appendChild(td);
       }
       fragment.appendChild(tr);
@@ -596,11 +874,15 @@
   }
 
   function updateButtons() {
-    const busy = state.running;
+    const busy = state.running || state.syncingSearch;
     el.pick.disabled = busy;
     el.includeDetail.disabled = busy;
-    el.scan.disabled = busy || !isCompleteMedia(state.media);
-    el.scan.textContent = isCompleteMedia(state.media) ? '开始逐页扫描并更新' : '请先上传视频';
+    const hasSearch = pageSearch.getCurrent().status === 'ready' && !searchFormDirty;
+    const preview = el.previewOnly.checked;
+    el.categoryInput.disabled = busy;
+    el.previewOnly.disabled = busy;
+    el.scan.disabled = busy || !hasSearch || (!preview && !isCompleteMedia(state.media));
+    el.scan.textContent = !hasSearch ? '请先在网页查询' : (preview ? '只扫描预览' : (isCompleteMedia(state.media) ? '按当前搜索边扫边提交' : '请先上传视频'));
     el.upload.disabled = busy || !state.selectedFile || isCompleteMedia(state.media);
     el.export.disabled = state.missingRows.length === 0;
     el.pause.disabled = !busy;
@@ -630,15 +912,15 @@
   async function updateMissingProduct(productId, context) {
     const row = state.missingRows.find((item) => item.productId === String(productId));
     const { pageNo, totalPages, index, total } = context;
-    const progress = (pageNo - 1) + 0.45 + (0.55 * (index / Math.max(1, total)));
     setSteps('update', ['upload', 'scan', 'filter']);
     setProgress(
       `第 ${pageNo}${totalPages ? `/${totalPages}` : ''} 页：立即更新`,
-      progress,
+      (pageNo - 1) + 0.45 + (0.55 * index / Math.max(1, total)),
       totalPages || pageNo,
       `当前 SPU：${productId}；本页 ${index + 1}/${total}`,
     );
     try {
+      if (!matchesSearchProduct(row, state.allowedCategories, state.searchScope)) throw new Error('网页筛选类目校验未通过，禁止更新');
       const latest = await request(API.queryVideo, { json: { productIds: [Number(productId)] } }, 2);
       const latestRow = extractVideoRows(latest).find((item) => String(item.productId) === String(productId));
       if (!latestRow) throw new Error('更新前复查未返回视频状态');
@@ -651,7 +933,7 @@
       }
 
       const response = await request(API.editVideo, {
-        json: buildEditRequest([productId], state.media, targets),
+        json: buildScopedEditRequest(row, state.media, targets, state.allowedCategories, state.searchScope),
       }, 2);
       const analyzed = analyzeUpdateResponse(response, [String(productId)]);
       if (analyzed.accepted.includes(String(productId))) {
@@ -665,7 +947,7 @@
         log(`SPU ${productId} 更新接口未确认成功`, 'error');
       }
     } catch (error) {
-      if (state.stopped || error.message === '任务已停止') throw error;
+      if (state.scopeInvalidated || state.stopped || error.message === '任务已停止' || state.taskMallId !== getMallId()) throw error;
       if (row) row.result = '失败';
       state.stats.failed += 1;
       log(`SPU ${productId} 更新失败：${error.message}`, 'error');
@@ -677,24 +959,46 @@
   }
 
   async function scanProducts() {
-    if (!isCompleteMedia(state.media)) {
+    if (state.running || state.syncingSearch) return;
+    const allowed = parseCategoryFilter(el.categoryInput.value);
+    let scope;
+    state.syncingSearch = true; updateButtons();
+    try {
+      await refreshPageSearch();
+      scope = pageSearch.snapshot();
+      if (scope.mallId !== getMallId()) throw new Error('店铺已切换，请重新点击网页查询');
+      buildSearchPageRequest(scope, 1);
+    } catch (error) { log(error.message, 'error'); return; }
+    finally { state.syncingSearch = false; updateButtons(); }
+    state.searchScope = scope;
+    const preview = el.previewOnly.checked;
+    if (!preview && !isCompleteMedia(state.media)) {
       log('请先上传视频并等待素材处理完成', 'error');
       return;
     }
-    startTask('process');
+    if (!preview && state.mediaMallId !== getMallId()) {
+      state.media = null; updateButtons();
+      log('视频所属店铺已变化，请在当前店铺重新上传', 'error'); return;
+    }
+    state.allowedCategories = Object.freeze(allowed.slice());
+    state.previewOnly = preview;
+    try { startTask('process'); } catch (error) { log(error.message, 'error'); return; }
     state.productIds = [];
     state.missingRows = [];
-    state.stats = { scanned: 0, missing: 0, existing: 0, success: 0, skipped: 0, failed: 0 };
+    state.stats = { scanned: 0, missing: 0, existing: 0, success: 0, skipped: 0, failed: 0, categoryMatched: 0, categorySkipped: 0, categoryUnknown: 0 };
     renderStats(); renderRows();
     setSteps('scan', ['upload']);
+    log(`本次${preview ? '只读预览' : '实际更新'}；使用网页查询结果 ${scope.total} 条，每页 ${scope.body.pageInfo.pageSize} 条，预计 ${Math.ceil(scope.total / scope.body.pageInfo.pageSize)} 页；额外类目：${allowed.join('、') || '不限制'}`);
+    log(preview ? '仅预览，不提交更新' : '每页检查后立即提交本页缺视频的商品，然后读取下一页');
     log(state.includeDetail
-      ? '开始逐页扫描；主图或详情任一为空即处理，仅补空项'
-      : '开始逐页扫描；每页检测完成后立即更新缺主图商品');
+      ? '开始逐页扫描；检查符合类目商品的主图和详情空缺'
+      : '开始逐页扫描；检查符合类目商品的主图空缺');
     try {
       const idSet = new Set();
       let pageNo = 1;
-      let total = 0;
-      let totalPages = 0;
+      let total = scope.total;
+      const pageSize = scope.body.pageInfo.pageSize;
+      let totalPages = Math.ceil(total / pageSize);
       while (true) {
         await checkpoint();
         setSteps('scan', ['upload']);
@@ -704,15 +1008,30 @@
           totalPages || 1,
           `当前页：${pageNo}`,
         );
-        const response = await request(API.productPage, { json: { pageInfo: { pageNo, pageSize: LIST_PAGE_SIZE } } });
+        const response = await request(API.productPage, { json: buildSearchPageRequest(scope, pageNo) });
         const page = extractProductPage(response);
-        total = Math.max(total, page.total);
-        totalPages = total > 0 ? Math.ceil(total / LIST_PAGE_SIZE) : totalPages;
+        if (pageNo > 1 && page.total !== total) throw new Error(`搜索结果数量发生变化，已停止后续处理；已成功提交 ${state.stats.success} 个商品，请重新查询后继续`);
+        total = page.total;
+        totalPages = total > 0 ? Math.ceil(total / pageSize) : 0;
         if (!page.rows.length) break;
 
-        const pageIds = extractProductIds(page.rows).filter((id) => !idSet.has(id));
-        for (const id of pageIds) idSet.add(id);
+        const products = extractCategorizedProducts(page.rows).filter((product) => !idSet.has(product.productId));
+        const productById = new Map(products.map((product) => [product.productId, product]));
+        const pageIds = [];
+        for (const product of products) {
+          idSet.add(product.productId);
+          if (!product.category) {
+            state.stats.categoryUnknown += 1;
+            log(`SPU ${product.productId} ${product.categoryIssue}，跳过`);
+          } else if (!matchesSearchProduct(product, state.allowedCategories, state.searchScope)) {
+            state.stats.categorySkipped += 1;
+          } else {
+            state.stats.categoryMatched += 1;
+            pageIds.push(product.productId);
+          }
+        }
         state.productIds = Array.from(idSet);
+        renderStats();
 
         setSteps('filter', ['upload', 'scan']);
         const batches = chunk(pageIds, VIDEO_QUERY_BATCH_SIZE);
@@ -743,9 +1062,10 @@
                 state.stats.missing += 1;
                 state.missingRows.push({
                   productId: String(productId),
+                  category: productById.get(String(productId)).category,
                   mainVideoStatus: isMissingMainVideo(row) ? '为空' : '已有',
                   detailVideoStatus: isMissingDetailVideo(row) ? '为空' : '已有',
-                  result: '待更新',
+                  result: state.previewOnly ? '仅预览' : '待更新',
                 });
                 pageMissingIds.push(String(productId));
               } else {
@@ -753,7 +1073,7 @@
               }
             }
           } catch (error) {
-            if (state.stopped || error.message === '任务已停止') throw error;
+            if (state.scopeInvalidated || state.stopped || error.message === '任务已停止' || state.taskMallId !== getMallId()) throw error;
             state.stats.failed += ids.length;
             log(`第 ${pageNo} 页第 ${batchIndex + 1} 批检查失败：${error.message}`, 'error');
           }
@@ -769,28 +1089,31 @@
         }
 
         const successBeforePage = state.stats.success;
-        for (let index = 0; index < pageMissingIds.length; index += 1) {
-          await checkpoint();
-          await updateMissingProduct(pageMissingIds[index], {
-            pageNo, totalPages, index, total: pageMissingIds.length,
-          });
+        if (!state.previewOnly) {
+          for (let index = 0; index < pageMissingIds.length; index += 1) {
+            await checkpoint();
+            await updateMissingProduct(pageMissingIds[index], {
+              pageNo, totalPages, index, total: pageMissingIds.length,
+            });
+          }
         }
         setProgress(
           `第 ${pageNo}${totalPages ? `/${totalPages}` : ''} 页处理完成`,
           pageNo,
           totalPages || pageNo,
-          `本页待补 ${pageMissingIds.length} 个，成功更新 ${state.stats.success - successBeforePage} 个`,
+          state.previewOnly ? `本页待补 ${pageMissingIds.length} 个，仅预览` : `本页待补 ${pageMissingIds.length} 个，成功更新 ${state.stats.success - successBeforePage} 个`,
         );
-        log(`第 ${pageNo}${totalPages ? `/${totalPages}` : ''} 页完成：检查 ${pageIds.length} 个，待补 ${pageMissingIds.length} 个，成功更新 ${state.stats.success - successBeforePage} 个`);
-        const reachedLastPage = (totalPages > 0 && pageNo >= totalPages) || page.rows.length < LIST_PAGE_SIZE;
+        log(`第 ${pageNo}${totalPages ? `/${totalPages}` : ''} 页完成：检查 ${pageIds.length} 个，待补 ${pageMissingIds.length} 个${state.previewOnly ? '，仅预览' : `，成功更新 ${state.stats.success - successBeforePage} 个`}`);
+        const reachedLastPage = (totalPages > 0 && pageNo >= totalPages) || page.rows.length < pageSize;
         if (reachedLastPage) break;
         pageNo += 1;
         await sleep(100);
       }
-      if (!state.productIds.length) throw new Error('商品列表为空，未取得任何 SPU');
-      setProgress('全部处理完成', 1, 1, `成功 ${state.stats.success}，跳过 ${state.stats.skipped}，失败 ${state.stats.failed}`);
+      if (!state.productIds.length) log('当前搜索结果为空，没有需要处理的商品');
+      setProgress(state.previewOnly ? '预览完成（未修改商品）' : '全部处理完成', 1, 1, `成功 ${state.stats.success}，跳过 ${state.stats.skipped}，失败 ${state.stats.failed}`);
       setSteps(null, ['upload', 'scan', 'filter', 'update']);
-      log(`全部完成：检查 ${state.stats.scanned}，待补 ${state.stats.missing}，成功 ${state.stats.success}，跳过 ${state.stats.skipped}，失败 ${state.stats.failed}`, state.stats.failed ? 'error' : 'success');
+      log(`类目符合 ${state.stats.categoryMatched}，其他类目 ${state.stats.categorySkipped}，分类不明/冲突 ${state.stats.categoryUnknown}`);
+      log(`${state.previewOnly ? '只读预览完成，未修改商品' : '全部完成'}：检查 ${state.stats.scanned}，待补 ${state.stats.missing}，成功 ${state.stats.success}，跳过 ${state.stats.skipped}，失败 ${state.stats.failed}`, state.stats.failed ? 'error' : 'success');
       finishTask('complete');
     } catch (error) {
       const stopped = state.stopped;
@@ -896,8 +1219,8 @@
   }
 
   async function uploadSelectedVideo() {
-    if (!state.selectedFile) return;
-    startTask('upload');
+    if (state.running || !state.selectedFile) return;
+    try { startTask('upload'); } catch (error) { log(error.message, 'error'); return; }
     setSteps('upload');
     log(`开始上传 ${state.selectedFile.name}（${formatBytes(state.selectedFile.size)}）`);
     try {
@@ -924,6 +1247,8 @@
         }, 1);
       }
       state.media = await waitForMaterial(materialRecord.id, seedMedia);
+      checkStopped();
+      state.mediaMallId = state.taskMallId;
       if (!isCompleteMedia(state.media)) throw new Error('素材信息不完整，禁止更新商品');
       setProgress('视频已就绪', 1, 1, `vid：${state.media.vid}`);
       setSteps(null, ['upload']);
@@ -954,6 +1279,54 @@
     return { accepted, rejected };
   }
 
+  let searchFormDirty = false;
+  function renderSearchSummary() {
+    const search = pageSearch.getCurrent();
+    if (searchFormDirty) { el.searchSummary.textContent = '网页筛选项已修改，请先点击网页“查询”'; return; }
+    if (search.status !== 'ready') { el.searchSummary.textContent = search.message; return; }
+    const size = search.body.pageInfo.pageSize;
+    el.searchSummary.textContent = `已同步网页查询：${search.total} 条，每页 ${size} 条，共 ${Math.ceil(search.total / size)} 页。分类：${search.categoryLabel}。状态、货号、语言等查询条件一并保留。`;
+  }
+  function invalidateRunningScope() {
+    if (state.running && state.phase === 'process') {
+      state.scopeInvalidated = true;
+      if (state.controller) state.controller.abort();
+    }
+  }
+  pageSearch.subscribe((current) => {
+    searchFormDirty = false;
+    if (state.running && state.phase === 'process'
+      && (current.status !== 'ready' || current.key !== state.searchScope?.key || current.mallId !== state.taskMallId)) invalidateRunningScope();
+    renderSearchSummary(); updateButtons();
+  });
+  // 网页筛选控件变动后必须重新查询；脚本面板自己的控件不影响网页范围。
+  const markSearchFormDirty = (event) => {
+    if (root.contains(event.target)) return;
+    if (event.target?.closest?.('form')) {
+      searchFormDirty = true;
+      invalidateRunningScope(); renderSearchSummary(); updateButtons();
+    }
+  };
+  document.addEventListener('input', markSearchFormDirty, true);
+  document.addEventListener('change', markSearchFormDirty, true);
+  renderSearchSummary();
+
+  async function refreshPageSearch() {
+    const form = Array.from(document.querySelectorAll('form')).find((item) => !root.contains(item) && item.textContent.includes('商品分类'));
+    const query = form && Array.from(form.querySelectorAll('button')).find((item) => item.textContent.trim() === '查询');
+    if (!query || query.disabled) throw new Error('未找到可用的网页查询按钮，请在图片/视频更新任务页面手动查询后重试');
+    const before = pageSearch.getRevision();
+    query.click();
+    const timeoutAt = Date.now() + 15000;
+    while (Date.now() < timeoutAt) {
+      if (pageSearch.getRevision() > before && pageSearch.getCurrent().status !== 'pending') {
+        pageSearch.snapshot(); return;
+      }
+      await sleep(100);
+    }
+    throw new Error('未捕获到网页查询结果，请重新点击网页查询后重试');
+  }
+
   el.launch.addEventListener('click', () => {
     const opening = el.panel.hidden;
     el.panel.hidden = !opening;
@@ -964,6 +1337,7 @@
   el.fileInput.addEventListener('change', async () => {
     const file = el.fileInput.files && el.fileInput.files[0];
     if (!file) return;
+    state.media = null; state.mediaMallId = '';
     try {
       if (!/\.mp4$/i.test(file.name) && file.type !== 'video/mp4') throw new Error('请选择 MP4 视频');
       const meta = await readVideoMeta(file);
@@ -983,6 +1357,11 @@
   el.includeDetail.addEventListener('change', () => {
     state.includeDetail = el.includeDetail.checked;
     log(state.includeDetail ? '已开启：同时补空缺的详情视频' : '已关闭：只补主图视频');
+  });
+  el.categoryInput.addEventListener('input', updateButtons);
+  el.previewOnly.addEventListener('change', () => {
+    log(el.previewOnly.checked ? '已切换为只读预览，不修改商品' : '已切换为实际更新模式；开始后按网页搜索结果逐页补视频');
+    updateButtons();
   });
   el.scan.addEventListener('click', scanProducts);
   el.upload.addEventListener('click', uploadSelectedVideo);
@@ -1009,5 +1388,8 @@
 
   updateButtons();
   console.info(`[商品主图视频批量更新] v${VERSION} 已加载`);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mountApp, { once: true });
+  else mountApp();
 }());
 
