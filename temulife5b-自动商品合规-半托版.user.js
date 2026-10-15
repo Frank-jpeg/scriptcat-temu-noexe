@@ -11,7 +11,7 @@
 // @run-at       document-idle
 // @downloadURL  https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temulife5b-%E8%87%AA%E5%8A%A8%E5%95%86%E5%93%81%E5%90%88%E8%A7%84-%E5%8D%8A%E6%89%98%E7%89%88.user.js
 // @updateURL    https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temulife5b-%E8%87%AA%E5%8A%A8%E5%95%86%E5%93%81%E5%90%88%E8%A7%84-%E5%8D%8A%E6%89%98%E7%89%88.user.js
-// @version      2026.1015.1
+// @version      2026.1015.2
 // ==/UserScript==
 
 const AUTO_COMPLIANCE_CONFIG_KEY = "goldabcd_noexe_auto_compliance_semi_config_v1";
@@ -244,7 +244,7 @@ function showAutoComplianceSetupPanel(message, mallId, mallName, config) {
     if (!button) {
         button = document.createElement("button");
         button.id = "auto-compliance-semi-noexe-button";
-        button.style = "z-index:9999;position:absolute;top:340px;left:520px;background-color:pink;border:0px;cursor:pointer;padding:10px;";
+        button.style = "z-index:9999;position:absolute;top:340px;left:260px;background-color:pink;border:0px;cursor:pointer;padding:10px;";
         button.title = "点击配置/启停自动商品合规";
         document.body.appendChild(button);
     }
@@ -266,7 +266,7 @@ function renderAutoComplianceSetupPanel(message, mallId, mallName, config) {
 
     const panel = document.createElement("div");
     panel.id = "auto-compliance-semi-noexe-setup";
-    panel.style = "z-index:9999;position:absolute;top:382px;left:520px;width:430px;background:#fff;color:#111;border:1px solid #ff8fb3;border-radius:6px;padding:10px;font-size:13px;line-height:1.45;box-shadow:0 6px 18px rgba(0,0,0,.15);";
+    panel.style = "z-index:9999;position:absolute;top:382px;left:260px;width:430px;background:#fff;color:#111;border:1px solid #ff8fb3;border-radius:6px;padding:10px;font-size:13px;line-height:1.45;box-shadow:0 6px 18px rgba(0,0,0,.15);";
 
     const title = document.createElement("div");
     title.textContent = AUTO_COMPLIANCE_BUTTON_TEXT;
