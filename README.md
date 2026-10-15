@@ -10,7 +10,8 @@ TEMU ScriptCat 自改版脚本，去掉本地下载器依赖，并支持 GitHub 
 - 2 开通JIT: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temu-life-2-jit.user.js
 - 3 增加库存: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temu-life-3-stock.user.js
 - 4 确认商品信息: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temu-life-4-confirm.user.js
-- 5 自动商品合规: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temulife5-%E8%87%AA%E5%8A%A8%E5%95%86%E5%93%81%E5%90%88%E8%A7%84.user.js
+- 5 自动商品合规（全托，扫描 task_type 60）: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temulife5-%E8%87%AA%E5%8A%A8%E5%95%86%E5%93%81%E5%90%88%E8%A7%84.user.js
+- 5B 自动商品合规（半托专用，扫描 task_type 166/4）: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temulife5b-%E8%87%AA%E5%8A%A8%E5%95%86%E5%93%81%E5%90%88%E8%A7%84-%E5%8D%8A%E6%89%98%E7%89%88.user.js
 - 6 自动实拍图: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temulife6-%E8%87%AA%E5%8A%A8%E5%AE%9E%E6%8B%8D%E5%9B%BE.user.js
 - 7 批量自动拒绝核价: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temu-life-7-reject.user.js
 - 8 按类目自动设置到货区域: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temu-life-8-area.user.js
@@ -30,6 +31,8 @@ TEMU ScriptCat 自改版脚本，去掉本地下载器依赖，并支持 GitHub 
 安装或更新后刷新页面，并重新点击网页“查询”以同步范围。额外类目限制通常留空。说明与版本边界见 [主图视频当前搜索条件](docs/main-video-current-search.md)。
 
 已安装旧文件名 `合规中心-商品合规-自动版-自改版.user.js` 的用户，自动商品合规需要删除旧脚本后按第 5 个新地址重装一次；配置 key 未改，模板配置通常会保留。
+
+`temulife5b-自动商品合规-半托版.user.js` 是独立的半托专用版本，配置 key 为 `goldabcd_noexe_auto_compliance_semi_config_v1`，与原版完全隔离，两个脚本可以同时装、互不覆盖；按钮和面板的 DOM id、坐标、菜单命令也全部错开，同一页面上两个按钮并存。半托版首次安装需要在它自己的 5B 面板里重新保存一次模板 SPU（配置不与原版共享）。
 
 ## 维护发布
 
@@ -129,6 +132,14 @@ ScriptCat 靠比较 `@version` 大小决定是否更新。若把日期式改成�
 `temulife5-自动商品合规.user.js` 不再依赖 `127.0.0.1:3000`。首次安装默认停用，打开 TEMU 商品选择页后先在第 5 个按钮里保存当前店铺“合规参考模板SPU”，再点“启用自动合规”。启用后脚本每 15 分钟轮询一个店铺，按模板SPU与目标商品相同的 TEMU `cat_id` 复制当前待办合规信息并提交。
 
 自动商品合规当前只扫描 `task_type_list: [60]`、`task_status_list: [2]`，即“制造商信息待处理”的商品。制造商信息完成后，即使其他合规任务仍待上传，该商品也不会再次进入自动队列。日志里的“合规成功”只表示 `edit_compliance` 接口返回成功，不代表页面上的全部合规任务都已完成；出现部分合规时需要在页面复查剩余任务。
+
+#### 5B 半托专用版
+
+`temulife5b-自动商品合规-半托版.user.js` 与第 5 个脚本同源，只改了扫描入口和隔离项：
+
+- 扫描入口改为 `task_type_list: [166, 4]`。原地实测：半托店铺（`mallMode = 1`）的待合规任务只有 166（包装材料信息收集）和 4（加州 65 号提案），`task_type 60` 在 1/2/3/4/5 全部状态下均为 0 条，所以原版在半托店铺会一直停在 `0/0/0`。
+- 遇到全托店铺（`mallMode = 0`）直接跳过并记日志，不提交任何数据。
+- 该版本尚未在真实店铺跑完整提交流程，首次使用建议先小批量验证，确认模板 SPU 能取到明细数据。
 
 ### 6 自动实拍图
 
