@@ -11,7 +11,7 @@
 // @run-at       document-idle
 // @downloadURL  https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temulife5b-%E8%87%AA%E5%8A%A8%E5%95%86%E5%93%81%E5%90%88%E8%A7%84-%E5%8D%8A%E6%89%98%E7%89%88.user.js
 // @updateURL    https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temulife5b-%E8%87%AA%E5%8A%A8%E5%95%86%E5%93%81%E5%90%88%E8%A7%84-%E5%8D%8A%E6%89%98%E7%89%88.user.js
-// @version      2026.1016.1
+// @version      2026.1019.1
 // ==/UserScript==
 
 const AUTO_COMPLIANCE_CONFIG_KEY = "goldabcd_noexe_auto_compliance_semi_config_v1";
@@ -28,7 +28,6 @@ const AUTO_COMPLIANCE_BUTTON_TEXT = "5B、自动商品合规(半托)";
 const AUTO_COMPLIANCE_DEFAULT_CONFIG = {
     version: 1,
     enabled: false,
-    forceNoWarning: true,
     templateSpuMap: {
         "默认模板": ""
     },
@@ -77,7 +76,6 @@ function normalizeAutoComplianceConfig(config) {
 
     normalized.version = 1;
     normalized.enabled = !!normalized.enabled;
-    normalized.forceNoWarning = normalized.forceNoWarning !== false;
     normalized.templateSpuMap = normalizeTemplateSpuMap(normalized.templateSpuMap || normalized.templates || {});
     normalized.mallTemplateSpuMap = normalizeMallTemplateSpuMap(normalized.mallTemplateSpuMap || {});
     if (!Object.prototype.hasOwnProperty.call(normalized.templateSpuMap, AUTO_COMPLIANCE_DEFAULT_TEMPLATE)) {
@@ -109,7 +107,7 @@ function normalizeTemplateSpuMap(value) {
     if (!map || typeof map !== "object" || Array.isArray(map)) map = {};
     const normalized = {};
     Object.keys(map).forEach(function(name) {
-        if (name === "version" || name === "enabled" || name === "forceNoWarning" || name === "templateSpuMap" || name === "mallTemplateSpuMap") return;
+        if (name === "version" || name === "enabled" || name === "templateSpuMap" || name === "mallTemplateSpuMap") return;
         normalized[normalizeTemplateName(name)] = String(map[name] == null ? "" : map[name]).trim();
     });
     if (!Object.prototype.hasOwnProperty.call(normalized, AUTO_COMPLIANCE_DEFAULT_TEMPLATE)) {
@@ -382,25 +380,6 @@ function renderAutoComplianceSetupPanel(message, mallId, mallName, config) {
     matchHint.textContent = "匹配规则：名称只做备注；脚本按模板SPU的TEMU类目ID(cat_id)匹配目标商品。";
     matchHint.style = "font-size:12px;color:#555;margin-bottom:8px;";
     panel.appendChild(matchHint);
-
-    const forceRow = document.createElement("label");
-    forceRow.style = "display:flex;align-items:center;gap:6px;font-size:12px;color:#333;margin-bottom:8px;cursor:pointer;";
-    const forceCheckbox = document.createElement("input");
-    forceCheckbox.type = "checkbox";
-    forceCheckbox.checked = (config || AUTO_COMPLIANCE_DEFAULT_CONFIG).forceNoWarning !== false;
-    forceCheckbox.onchange = async function() {
-        const nextConfig = await loadAutoComplianceConfig();
-        nextConfig.forceNoWarning = !!forceCheckbox.checked;
-        await saveAutoComplianceConfig(nextConfig);
-        messageDiv.textContent = forceCheckbox.checked
-            ? "已开启：加州65 号提案一律按「无需警示」提交"
-            : "已关闭：加州65 号提案按参考模板原值提交";
-    };
-    forceRow.appendChild(forceCheckbox);
-    const forceText = document.createElement("span");
-    forceText.textContent = "加州65 号提案一律按「无需警示」提交（含「待确认」任务）";
-    forceRow.appendChild(forceText);
-    panel.appendChild(forceRow);
 
     const buttonRow = document.createElement("div");
     buttonRow.style = "display:flex;gap:8px;align-items:center;";
@@ -904,7 +883,7 @@ function isEmptyPlainObject(obj) {
                 type: 2,
                 goods_status_list: [1, 2],
                 task_type_list: SEMI_COMPLIANCE_TASK_TYPES,
-                task_status_list: [2, 5]
+                task_status_list: [2]
             });
 
             if (!pageQueryData.success) {
@@ -998,13 +977,6 @@ function isEmptyPlainObject(obj) {
                 const taskType2Value = cloneAutoCompliance(taskType2ValueTemplate);
                 taskType2Value.task_id = task.task_id;
                 taskType2Value.task_status = task.status;
-
-                if (Number(task.task_type) === 4 && config && config.forceNoWarning !== false) {
-                    taskType2Value.properties = { "1000000001": [1000100066] };
-                    delete taskType2Value.suppl_prop_info_list;
-                    taskType2Value.images = {};
-                    taskType2Value.input_text = {};
-                }
 
                 if (Number(task.task_type) === 166) {
                     if (!skuInfoList.length) {
