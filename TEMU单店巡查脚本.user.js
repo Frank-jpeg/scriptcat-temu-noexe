@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEMU单店巡查脚本
 // @namespace    https://local.temu.single.inspector
-// @version      1.9.25
+// @version      1.9.26
 // @description  单店铺 TEMU 巡查：抽检结果、JIT 逾期、合规中心、违规信息、VMI 未收货、价格申报、退货包裹、资金余额
 // @match        https://agentseller.temu.com/*
 // @match        https://seller.kuajingmaihuo.com/*
@@ -17,7 +17,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '1.9.25';
+  const SCRIPT_VERSION = '1.9.26';
   const APP_ID = '__temu_single_store_script_v8';
   const PANEL_ID = `${APP_ID}_panel`;
   const RESULT_DIALOG_ID = `${APP_ID}_result_dialog`;
@@ -1541,7 +1541,7 @@
     }
     const loginButton = findLoginButton() || loginState.loginButton;
     if (loginButton && !loginButton.disabled && loginButton.getAttribute('aria-disabled') !== 'true') {
-      loginButton.click();
+      clickLikeUser(loginButton);
     } else {
       const reason = '协议已勾选，但登录按钮不可用，请手动登录后重新开始';
       await stopOnLoginFailure(jobId, reason);
