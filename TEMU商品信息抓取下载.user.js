@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Temu 商品信息抓取下载 GitHub更新版
 // @namespace    https://bbs.tampermonkey.net.cn/
-// @version      4.30.5
-// @description  批量抓取 Temu 商品（详情页直接识别店铺和抓取状态，支持多币种价格/销量筛选、记住上次筛选值、生成销量TXT统计、中文/英文销量识别、JPG/PNG可选、原始字节下载、自动跳过推荐区、并发下载、自定义间隔）
+// @version      4.31.0
+// @description  批量抓取 Temu 商品（详情页直接识别店铺和抓取状态，支持多币种价格/销量筛选、记住上次筛选值、生成销量TXT统计、中文/英文销量识别、JPG/PNG可选、原始字节下载、自动跳过推荐区、并发下载、自定义间隔、下载文件夹自定义后缀）
 // @author       Gemini
 // @match        https://www.temu.com/*
 // @run-at       document-idle
@@ -20,13 +20,16 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '4.30.5';
+    const SCRIPT_VERSION = '4.31.0';
     const STORAGE_KEY = 'TEMU_SCRAPED_SHOPS_STORAGE';
     const IMAGE_FORMAT_KEY = 'TEMU_IMAGE_FORMAT';
     const MIN_SALES_KEY = 'TEMU_MIN_SALES';
     const MIN_PRICE_KEY = 'TEMU_MIN_PRICE';
+    const FOLDER_SUFFIX_KEY = 'TEMU_FOLDER_SUFFIX';
     const DEFAULT_MIN_SALES = 10;
     const DEFAULT_MIN_PRICE = 7;
+    // 文件夹后缀预选词，想加/改直接改这个数组
+    const FOLDER_SUFFIX_PRESETS = ['马克杯', '帽子', '洗手液'];
     const BACKUP_TIME_KEY = 'TEMU_SCRAPED_SHOPS_LAST_BACKUP_TIME';
     const BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
     const GITHUB_SYNC_CONFIG_KEY = 'TEMU_SCRAPED_SHOPS_GITHUB_SYNC_CONFIG';
@@ -171,6 +174,34 @@
 
     function getSavedMinPrice() {
         return normalizeMinPrice(GM_getValue(MIN_PRICE_KEY, DEFAULT_MIN_PRICE));
+    }
+
+    // --- 下载文件夹后缀 ---
+    // 清掉文件系统非法字符和用户误带的首尾分隔符；留空即表示不加后缀
+    function normalizeFolderSuffix(value) {
+        return String(value == null ? '' : value)
+            .replace(/[\\/:*?"<>|]/g, '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .replace(/^[-_]+/, '')
+            .replace(/[-_\s]+$/, '')
+            .substring(0, 40);
+    }
+
+    function getSavedFolderSuffix() {
+        return normalizeFolderSuffix(GM_getValue(FOLDER_SUFFIX_KEY, ''));
+    }
+
+    function saveFolderSuffix(value) {
+        const suffix = normalizeFolderSuffix(value);
+        GM_setValue(FOLDER_SUFFIX_KEY, suffix);
+        return suffix;
+    }
+
+    // 后缀为空时返回原店铺名，保证和改前的命名完全一致
+    function applyFolderSuffix(baseName, suffix) {
+        const cleanSuffix = normalizeFolderSuffix(suffix);
+        return cleanSuffix ? `${baseName}_${cleanSuffix}` : String(baseName || '');
     }
 
     // 获取已抓取店铺列表
@@ -539,7 +570,9 @@
 
     function updateStatusText(msg = '') {
         const currentShop = safeGetShopName();
-        status.innerText = `当前店铺: ${currentShop}\n输出格式: ${getSelectedImageFormat().toUpperCase()}\n${msg || '等待操作...'}`;
+        const savedSuffix = getSavedFolderSuffix();
+        const suffixLine = savedSuffix ? `\n文件夹后缀: ${savedSuffix}` : '';
+        status.innerText = `当前店铺: ${currentShop}\n输出格式: ${getSelectedImageFormat().toUpperCase()}${suffixLine}\n${msg || '等待操作...'}`;
     }
     updateStatusText();
 
@@ -979,9 +1012,9 @@
         return { items: results };
     }
 
-    function getShopFolderName(shopName) {
-        const folderName = sanitize(shopName || safeGetShopName() || '未知店铺');
-        return folderName || '未知店铺';
+    function getShopFolderName(shopName, folderSuffix = '') {
+        const baseName = sanitize(shopName || safeGetShopName() || '未知店铺') || '未知店铺';
+        return applyFolderSuffix(baseName, folderSuffix);
     }
 
     function getDownloadErrorText(error) {
@@ -1081,8 +1114,8 @@
         return new Promise(resolve => setTimeout(resolve, Math.max(0, ms || 0)));
     }
 
-    function downloadItem(item, index, total, shopName = safeGetShopName(), stats = null, onComplete = null) {
-        const shopFolderName = getShopFolderName(shopName);
+    function downloadItem(item, index, total, shopName = safeGetShopName(), stats = null, onComplete = null, folderSuffix = getSavedFolderSuffix()) {
+        const shopFolderName = getShopFolderName(shopName, folderSuffix);
         const complete = () => {
             if (typeof onComplete === 'function') onComplete();
         };
@@ -1119,7 +1152,7 @@
         });
     }
 
-    async function startConcurrentDownloads(items, shopName, downloadInterval, concurrency, stats) {
+    async function startConcurrentDownloads(items, shopName, downloadInterval, concurrency, stats, folderSuffix = getSavedFolderSuffix()) {
         const workerCount = Math.min(items.length, Math.max(1, Math.min(10, parseInt(concurrency, 10) || 1)));
         let nextIndex = 0;
 
@@ -1133,7 +1166,7 @@
                 if (currentIndex >= items.length) return;
 
                 await new Promise(resolve => {
-                    downloadItem(items[currentIndex], currentIndex, items.length, shopName, stats, resolve);
+                    downloadItem(items[currentIndex], currentIndex, items.length, shopName, stats, resolve, folderSuffix);
                 });
 
                 if (downloadInterval > 0) {
@@ -1170,13 +1203,13 @@
         const imageFormat = getSelectedImageFormat();
         const { items } = getItems(minSalesThreshold, minPriceThreshold, imageFormat);
         const shopName = safeGetShopName();
-        const shopFolderName = getShopFolderName(shopName);
 
         if (items.length === 0) { updateStatusText(`未找到商品`); return; }
 
         const isDuplicate = isScrapedShopName(shopName);
 
-        showConfirmModal(items.length, shopName, isDuplicate, minSalesThreshold, minPriceThreshold, async () => {
+        showConfirmModal(items.length, shopName, isDuplicate, minSalesThreshold, minPriceThreshold, async (folderSuffix) => {
+            const shopFolderName = getShopFolderName(shopName, folderSuffix);
             lastDuplicateToastShop = normalizeShopNameForCompare(shopName);
             saveShopName(shopName);
 
@@ -1208,7 +1241,7 @@
 
             // 开始下载图片
             const downloadStats = { success: 0, failed: 0, total: items.length };
-            await startConcurrentDownloads(items, shopName, downloadInterval, downloadConcurrency, downloadStats);
+            await startConcurrentDownloads(items, shopName, downloadInterval, downloadConcurrency, downloadStats, folderSuffix);
         });
     };
 
@@ -1369,11 +1402,81 @@
         const modal = document.createElement('div');
         modal.style.cssText = `position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10001; display: flex; align-items: center; justify-content: center;`;
         const dialog = document.createElement('div');
-        dialog.style.cssText = `background: #fff; padding: 25px; border-radius: 12px; width: 320px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.3); border: ${isDuplicate ? '3px solid #ff4d4f' : 'none'};`;
+        dialog.style.cssText = `background: #fff; padding: 25px; border-radius: 12px; width: 340px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.3); border: ${isDuplicate ? '3px solid #ff4d4f' : 'none'};`;
         const titleColor = isDuplicate ? '#ff4d4f' : '#fb7701';
-        dialog.innerHTML = `<h3 style="margin-top:0; color:${titleColor};">下载确认</h3><p style="font-size:14px; color:#333; margin:15px 0;">店铺: <b>${shopName}</b><br>${isDuplicate ? '<b style="color:#ff4d4f;">⚠️ 之前已抓取过此店铺！</b><br>' : ''}满足 销量≥<b>${minSales}</b> 且 价格≥<b>${minPrice}</b> 商品: <b>${count}</b> 个。<br><br>确认开始高清下载吗？</p><div style="display:flex; gap:10px; justify-content:center;"><button id="c-cancel" style="padding:8px 20px; border:1px solid #ccc; background:#fff; cursor:pointer;">取消</button><button id="c-ok" style="padding:8px 20px; border:none; background:${titleColor}; color:#fff; cursor:pointer; font-weight:bold;">确定</button></div>`;
-        modal.appendChild(dialog); document.body.appendChild(modal);
-        document.getElementById('c-cancel').onclick = () => document.body.removeChild(modal);
-        document.getElementById('c-ok').onclick = () => { document.body.removeChild(modal); onConfirm(); };
+        const savedSuffix = getSavedFolderSuffix();
+        dialog.innerHTML = `
+            <h3 style="margin-top:0; color:${titleColor};">下载确认</h3>
+            <p style="font-size:14px; color:#333; margin:15px 0;">
+                店铺: <b>${escapeHtml(shopName)}</b><br>
+                ${isDuplicate ? '<b style="color:#ff4d4f;">⚠️ 之前已抓取过此店铺！</b><br>' : ''}
+                满足 销量≥<b>${minSales}</b> 且 价格≥<b>${minPrice}</b> 商品: <b>${count}</b> 个。
+            </p>
+            <div style="text-align:left; background:#fafafa; border:1px solid #eee; border-radius:8px; padding:10px 12px; margin-bottom:14px;">
+                <div style="font-size:12px; color:#666; margin-bottom:6px;">文件夹后缀（可选，留空则与以前一致）</div>
+                <input id="c-folder-suffix" type="text" maxlength="40" placeholder="例如: 马克杯" value="${escapeHtml(savedSuffix)}" style="box-sizing:border-box; width:100%; padding:7px 9px; border:1px solid #ddd; border-radius:4px; font-size:13px; color:#333;">
+                <div id="c-suffix-presets" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;"></div>
+                <div id="c-folder-preview" style="margin-top:8px; font-size:12px; color:#888; word-break:break-all; line-height:1.4;"></div>
+            </div>
+            <div style="display:flex; gap:10px; justify-content:center;">
+                <button id="c-cancel" style="padding:8px 20px; border:1px solid #ccc; background:#fff; cursor:pointer;">取消</button>
+                <button id="c-ok" style="padding:8px 20px; border:none; background:${titleColor}; color:#fff; cursor:pointer; font-weight:bold;">确定</button>
+            </div>`;
+        modal.appendChild(dialog);
+        document.body.appendChild(modal);
+
+        const suffixInput = document.getElementById('c-folder-suffix');
+        const presetBox = document.getElementById('c-suffix-presets');
+        const preview = document.getElementById('c-folder-preview');
+
+        const renderPreview = () => {
+            const folderName = getShopFolderName(shopName, normalizeFolderSuffix(suffixInput.value));
+            preview.textContent = `保存到文件夹: ${folderName}/`;
+        };
+
+        const renderPresets = () => {
+            const current = normalizeFolderSuffix(suffixInput.value);
+            presetBox.innerHTML = '';
+            FOLDER_SUFFIX_PRESETS.forEach(preset => {
+                const active = current === preset;
+                const chip = document.createElement('button');
+                chip.type = 'button';
+                chip.textContent = preset;
+                chip.style.cssText = `padding:4px 10px; font-size:12px; border-radius:12px; cursor:pointer; border:1px solid ${active ? '#fb7701' : '#ddd'}; background:${active ? '#fff3e6' : '#fff'}; color:${active ? '#fb7701' : '#666'};`;
+                chip.onclick = () => {
+                    suffixInput.value = normalizeFolderSuffix(suffixInput.value) === preset ? '' : preset;
+                    renderPresets();
+                    renderPreview();
+                };
+                presetBox.appendChild(chip);
+            });
+        };
+
+        const close = () => {
+            if (modal.parentNode) modal.parentNode.removeChild(modal);
+        };
+
+        const confirmAndClose = () => {
+            const suffix = saveFolderSuffix(suffixInput.value);
+            close();
+            onConfirm(suffix);
+        };
+
+        suffixInput.addEventListener('input', () => {
+            renderPresets();
+            renderPreview();
+        });
+        suffixInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                confirmAndClose();
+            }
+        });
+        document.getElementById('c-cancel').onclick = close;
+        document.getElementById('c-ok').onclick = confirmAndClose;
+
+        renderPresets();
+        renderPreview();
+        suffixInput.focus();
     }
 })();
