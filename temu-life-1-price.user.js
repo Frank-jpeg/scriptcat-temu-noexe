@@ -4,7 +4,7 @@
 // @description  提交核价（自改版，无需下载器EXE，带可视化配置、接口日志和业务明细）
 // @author       TonyTonyYang
 // @match        https://agentseller.temu.com/newon/product-select*
-// @version      2026.0930.2
+// @version      2026.1024.1
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
@@ -15,7 +15,7 @@
 
 const NOEXE_STORAGE_KEY = "goldabcd_noexe_config_v1";
 const NOEXE_STORAGE_BACKUP_KEY = "goldabcd_noexe_config_v1_local_backup";
-const NOEXE_UI_VERSION = "2026.0930.2";
+const NOEXE_UI_VERSION = "2026.1024.1";
 const NOEXE_DEFAULT_CONFIG = {
     "version": 1,
     "malls": [],
@@ -44,7 +44,8 @@ const NOEXE_LOG_SCRIPT_FILTERS = [
     { key: "compliance", label: "5 自动商品合规", match: "合规中心-商品合规" },
     { key: "realPhoto", label: "6 自动实拍图", match: "上新生命周期-6-自动实拍图" },
     { key: "reject", label: "7 拒绝核价", match: "上新生命周期-7-批量拒绝核价" },
-    { key: "area", label: "8 到货区域", match: "上新生命周期-8-按类目自动设置到货区域" }
+    { key: "area", label: "8 到货区域", match: "上新生命周期-8-按类目自动设置到货区域" },
+    { key: "qualification", label: "9 资质上传", match: "上新生命周期-9-按模板自动上传资质" }
 ];
 const NOEXE_LOG_KEEP_PER_SCRIPT = 1000;
 const NOEXE_LOG_RENDER_LIMIT = 120;

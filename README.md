@@ -14,7 +14,7 @@ TEMU ScriptCat 自改版脚本，去掉本地下载器依赖，并支持 GitHub 
 - 5B 自动商品合规（半托专用，扫描 task_type 166/4）: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temulife5b-%E8%87%AA%E5%8A%A8%E5%95%86%E5%93%81%E5%90%88%E8%A7%84-%E5%8D%8A%E6%89%98%E7%89%88.user.js
 - 6 自动实拍图: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temulife6-%E8%87%AA%E5%8A%A8%E5%AE%9E%E6%8B%8D%E5%9B%BE.user.js
 - 7 批量自动拒绝核价: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temu-life-7-reject.user.js
-- 8 按类目自动设置到货区域: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temu-life-8-area.user.js
+- 9 按模板自动上传资质（FCM / FCM DoC）: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temu-life-9-qualification.user.js
 - TEMU商品信息抓取下载: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/TEMU%E5%95%86%E5%93%81%E4%BF%A1%E6%81%AF%E6%8A%93%E5%8F%96%E4%B8%8B%E8%BD%BD.user.js
 - TEMU商品列表导出: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/TEMU%E5%95%86%E5%93%81%E5%88%97%E8%A1%A8%E5%AF%BC%E5%87%BA.user.js
 - TEMU单店巡查脚本: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/TEMU%E5%8D%95%E5%BA%97%E5%B7%A1%E6%9F%A5%E8%84%9A%E6%9C%AC.user.js
@@ -87,7 +87,7 @@ ScriptCat 靠比较 `@version` 大小决定是否更新。若把日期式改成�
 
 第 7、8 个 `2026.1001.1` 起，运行中刷新不再由脚本弹出“重新加载此网站”确认；刷新取消请求不会关闭已保存的开关，页面重新加载后 5 秒自动继续。第 7 个 `2026.1001.2`、第 8 个 `2026.1001.4` 起，纯扫描遇到 30 秒超时、网络中断或 HTTP 408/429/5xx 会显示“保持开启”，按原间隔再扫描（7、8 均为 6 小时），不使用失败扫描的旧清单。手动暂停、业务或认证错误、响应格式错误、写入失败及提交结果不明仍保存关闭。
 
-共享配置和“运行日志”面板只由 `temu-life-1-price.user.js` 创建。生命周期 2-8 只向页面发送日志事件，所以未安装或停用生命周期 1 时，其他脚本仍能运行，但看不到共享日志面板。生命周期 1 `2026.0930.2` 起提供 `1` 至 `8` 的独立日志筛选；日志只保存在当前页面内存中，刷新或关闭页面会清空。
+共享配置和“运行日志”面板只由 `temu-life-1-price.user.js` 创建。生命周期 2-9 只向页面发送日志事件，所以未安装或停用生命周期 1 时，其他脚本仍能运行，但看不到共享日志面板。生命周期 1 `2026.0930.2` 起提供 `1` 至 `8` 的独立日志筛选（包含 9 资质上传）；日志只保存在当前页面内存中，刷新或关闭页面会清空。
 
 第 7 个 `2026.0930.3`、第 8 个 `2026.0930.4` 起，外部按钮统一为与 5、6 相同的粉色，开关状态仍由文字显示。配置框在按钮下方展开，采用约 430px 宽的白底、粉色边框和紧凑输入/操作按钮；列表内部滚动。
 
@@ -111,6 +111,9 @@ ScriptCat 靠比较 `@version` 大小决定是否更新。若把日期式改成�
 
 第 1 个仅增加“8 到货区域”日志筛选，版本 `2026.0930.2`，报价业务不变。第 8 个可独立运行；更新第 1 个可在共享日志中按 8 筛选。验证细节见 [生命周期 8 验证记录](docs/category-area-validation.md)。
 
+### 9 按模板自动上传资质
+
+第 9 个脚本使用模板 SPU 已有资质，按末级类目匹配目标商品，只上传 FCM（132）和 FCM DoC（1208）。资质文件直接复用 TEMU 返回的模板文件 URL，不需要本地下载或选择文件。面板中填写模板 SPU 和目标 SPU，保存后开启自动上传；每轮结束 6 小时后再次检查。
 ### 7 批量自动拒绝核价
 
 1. 安装或更新第 7 个到 `2026.1001.3`。可独立使用；第 1 个的 `2026.0930.1` 已支持“7 拒绝核价”日志筛选；查看第 8 个筛选需要第 1 个 `2026.0930.2`。
@@ -173,3 +176,6 @@ ScriptCat 靠比较 `@version` 大小决定是否更新。若把日期式改成�
 首次使用需要在脚本的“管理/备份已抓取店铺”里填写 GitHub Token。Token 只保存在脚本猫本地，不写入本仓库脚本代码。
 
 保存 Token 后，脚本启动时会每天最多自动合并同步一次；手动上传或合并同步成功后，当天不会再自动同步。
+
+
+
