@@ -15,6 +15,7 @@ TEMU ScriptCat 自改版脚本，去掉本地下载器依赖，并支持 GitHub 
 - 6 自动实拍图: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temulife6-%E8%87%AA%E5%8A%A8%E5%AE%9E%E6%8B%8D%E5%9B%BE.user.js
 - 7 批量自动拒绝核价: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temu-life-7-reject.user.js
 - 9 按模板自动上传资质（FCM / FCM DoC）: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temu-life-9-qualification.user.js
+- 批量报名流量增长（流量增长页，接口版，两步式面板 + 类目筛选）: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/%E6%89%B9%E9%87%8F%E6%8A%A5%E5%90%8D%E6%B5%81%E9%87%8F%E5%A2%9E%E9%95%BF.user.js
 - TEMU商品信息抓取下载: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/TEMU%E5%95%86%E5%93%81%E4%BF%A1%E6%81%AF%E6%8A%93%E5%8F%96%E4%B8%8B%E8%BD%BD.user.js
 - TEMU商品列表导出: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/TEMU%E5%95%86%E5%93%81%E5%88%97%E8%A1%A8%E5%AF%BC%E5%87%BA.user.js
 - TEMU单店巡查脚本: https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/TEMU%E5%8D%95%E5%BA%97%E5%B7%A1%E6%9F%A5%E8%84%9A%E6%9C%AC.user.js
