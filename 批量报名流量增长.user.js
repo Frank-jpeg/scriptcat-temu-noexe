@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         批量报名流量增长
 // @namespace    https://github.com/Frank-jpeg/scriptcat-temu-noexe
-// @version      3.2.0
+// @version      3.3.0
 // @description  TEMU 卖家中心「流量增长」批量报名（两步式全屏面板）：点「开始获取数据」只读扫描全店 SKU 并自动补上商品类目 → 顶部可按类目筛选，列表里一目了然哪些能被报名、哪些因价格太低/已报过名被跳过 → 确认无误再点「确认提交」才真正提交，提交范围严格限定在当前类目 + 已勾选。全程走接口，3 万 SKU 约 1 分钟
 // @author       洋芋
 // @match        https://agentseller.temu.com/main/flow-grow*
@@ -167,6 +167,7 @@
   const ST = {
     ok:        { text: '可提交',   cls: 'ok' },
     submitted: { text: '已报名',   cls: 'sub' },
+    pending:   { text: '待确认',   cls: 'pend' },
     floor:     { text: '价格太低', cls: 'warn' },
     done:      { text: '已报过名', cls: 'muted' },
     none:      { text: '无降价档', cls: 'muted' },
@@ -253,6 +254,7 @@
   .tfg-card.ok .n{color:#1a7f37}
   .tfg-card.sub .n{color:#0071e3}
   .tfg-card.warn .n{color:#ff9500}
+  .tfg-card.pend .n{color:#b26a00}
   .tfg-card.muted .n{color:#86868b}
 
   /* 筛选条 */
@@ -322,6 +324,7 @@
   .tfg-tag.ok{background:#e7f7ec;color:#1a7f37}
   .tfg-tag.sub{background:#e6f1fd;color:#0066cc}
   .tfg-tag.warn{background:#fff5e5;color:#c26a00}
+  .tfg-tag.pend{background:#fff2dc;color:#b26a00}
   .tfg-tag.muted{background:#f2f2f5;color:#86868b}
   .tfg-tag.err{background:#fdeceb;color:#c1272d}
   .tfg-empty{padding:70px 24px;text-align:center;color:#a1a1a6;font-size:13.5px;line-height:2}
@@ -373,7 +376,7 @@
     mask = h(`<div class="tfg-mask" id="tfg-mask"><div class="tfg-panel">
       <div class="tfg-head">
         <div class="tfg-logo">🌱</div>
-        <div class="tfg-h1">流量增长 · 批量报名<i>接口版 v3.2.0</i></div>
+        <div class="tfg-h1">流量增长 · 批量报名<i>接口版 v3.3.0</i></div>
         <div class="tfg-shop" id="tfg-shop"></div>
         <button class="tfg-x" id="tfg-x" title="收起">×</button>
       </div>
@@ -626,6 +629,7 @@
       card(scoped.length, '扫到的 SKU', '', 'all') +
       card(c.ok || 0, '可以提交', 'ok', 'ok') +
       card(c.submitted || 0, '已报名成功', 'sub', 'submitted') +
+      card(c.pending || 0, '待确认', 'pend', 'pending') +
       card(c.floor || 0, '价格太低', 'warn', 'floor') +
       card(c.done || 0, '已报过名', 'muted', 'done') +
       card(other, '其他不可报', 'muted', 'other');
@@ -634,6 +638,7 @@
       ['all', '全部', scoped.length],
       ['ok', '可提交', c.ok || 0],
       ['submitted', '已报名', c.submitted || 0],
+      ['pending', '待确认', c.pending || 0],
       ['floor', '价格太低', c.floor || 0],
       ['done', '已报过名', c.done || 0],
       ['other', '其他', other]
@@ -652,6 +657,7 @@
     cache = catRows().filter(r => {
       if (S.filter === 'ok' && r.status !== 'ok') return false;
       if (S.filter === 'submitted' && r.status !== 'submitted') return false;
+      if (S.filter === 'pending' && r.status !== 'pending') return false;
       if (S.filter === 'floor' && r.status !== 'floor') return false;
       if (S.filter === 'done' && r.status !== 'done') return false;
       if (S.filter === 'other' && r.status !== 'none' && r.status !== 'fail') return false;
@@ -1034,6 +1040,49 @@
     });
   }
 
+  // 平台提交后写入有延迟（实测价格与增长记录要 1~2 分钟才出现），
+  // 所以先把所有批次发完，再统一多轮回查，避免「提交完立刻查」全判失败。
+  const VERIFY_ROUNDS = 8;      // 8 轮 × 15 秒 ≈ 2 分钟
+  const VERIFY_GAP = 15000;
+
+  async function verifySent(sent) {
+    for (let round = 0; round < VERIFY_ROUNDS; round++) {
+      if (S.stop) break;
+      const rest = sent.filter(r => r.status === 'pending');
+      if (!rest.length) break;
+
+      const pids = [];
+      for (const r of rest) if (pids.indexOf(r.pid) < 0) pids.push(r.pid);
+      const live = new Map();
+      for (let i = 0; i < pids.length; i += 100) {
+        try {
+          const q = await api('pageQuery', { pageInfo: { pageNo: 1, pageSize: 100 }, productIdList: pids.slice(i, i + 100) });
+          for (const p of (q.products || [])) live.set(p.productId, p);
+        } catch (e) { /* 限流或网络抖动，这一批留到下一轮 */ }
+      }
+
+      for (const r of rest) {
+        const lp = live.get(r.pid);
+        const ls = lp && (lp.skcOrSkus || []).find(x => x.productSkcOrSkuId === r.skuId);
+        if (!ls) continue;                                  // 没查到 ≠ 失败，继续等
+        if (ls.increaseFlowRecordId || ls.currencySupplyPrice === r.afterFen) {
+          r.status = 'submitted';
+          r.reason = '已报名成功：降到了 ¥' + yuan(r.afterFen) + '（活动价 ¥' + yuan(r.actFen) + '）';
+        }
+      }
+
+      const ok = sent.filter(r => r.status === 'submitted').length;
+      const left = sent.filter(r => r.status === 'pending').length;
+      invalidate();
+      renderStats();
+      renderRows();
+      setBar(88 + ((round + 1) / VERIFY_ROUNDS) * 12);
+      footText(`核实第 <b>${round + 1}</b>/${VERIFY_ROUNDS} 轮 · 已确认成功 <b>${ok}</b> 个 · 还在处理 <b>${left}</b> 个`, '每轮隔 15 秒，平台生效一般 1~2 分钟');
+      if (!left) break;
+      if (round + 1 < VERIFY_ROUNDS) await sleep(VERIFY_GAP);
+    }
+  }
+
   async function doSubmit() {
     // 只提交「当前类目筛选范围内 + 已勾选」的，筛选外的一律不碰
     const pick = catRows().filter(r => r.status === 'ok' && r.picked);
@@ -1064,7 +1113,7 @@
     }
     if (cur.length) batches.push(cur);
 
-    let okNum = 0, failNum = 0;
+    const sent = [];
 
     for (let bi = 0; bi < batches.length; bi++) {
       if (S.stop) break;
@@ -1089,63 +1138,40 @@
         const res = await api('commit', body);
         const detail = Array.isArray(res.productInfoList) ? res.productInfoList : [];
         const bySku = new Map(detail.map(x => [x.productSkcOrSkuId, x]));
-
-        // 平台返回会误标失败（实测 50 个报错的价格其实都降了、也都报上了），
-        // 所以以「回查到的真实状态」为准：价格 == 目标价 且 有增长记录 → 成功
-        await sleep(350);
-        const pids = [];
-        for (const r of chunk) if (pids.indexOf(r.pid) < 0) pids.push(r.pid);
-        const live = new Map();
-        try {
-          const q = await api('pageQuery', { pageInfo: { pageNo: 1, pageSize: 100 }, productIdList: pids });
-          for (const p of (q.products || [])) live.set(p.productId, p);
-        } catch (e) { /* 回查失败就退回看接口返回 */ }
-
         for (const r of chunk) {
           r.picked = false;
-          const lp = live.get(r.pid);
-          const ls = lp && (lp.skcOrSkus || []).find(x => x.productSkcOrSkuId === r.skuId);
+          r.status = 'pending';                  // 先挂「待确认」，统一回查后再定
           const d = bySku.get(r.skuId);
-
-          if (ls && ls.currencySupplyPrice === r.afterFen && ls.increaseFlowRecordId) {
-            r.status = 'submitted';
-            r.reason = '已报名成功：降到了 ¥' + yuan(r.afterFen) + '（活动价 ¥' + yuan(r.actFen) + '）';
-          } else if (ls) {
-            r.status = 'fail';
-            r.reason = (d && !d.isSuccess) ? failText(d) : '回查没看到生效，刷新页面对照一下';
-            r.failMsg = r.reason;
-          } else if (d && d.isSuccess) {
-            r.status = 'submitted';
-            r.reason = '已提交成功';
-          } else if (d && d.failType === 6) {
-            r.status = 'done';
-            r.reason = '已报过名（重复提交）';
-          } else {
-            r.status = 'fail';
-            r.reason = d ? failText(d) : '不确定，刷新页面对照一下';
-            r.failMsg = r.reason;
-          }
+          r.retMsg = d && !d.isSuccess ? failText(d) : '';
         }
-
-        okNum += chunk.filter(r => r.status === 'submitted').length;
-        failNum += chunk.filter(r => r.status === 'fail').length;
+        sent.push.apply(sent, chunk);
       } catch (e) {
-        failNum += chunk.length;
+        // 请求报错不代表没提交成功，同样挂「待确认」，交给回查
         for (const r of chunk) {
-          r.status = 'fail';
           r.picked = false;
-          r.reason = e.message;
-          r.failMsg = e.message;
+          r.status = 'pending';
+          r.retMsg = '请求出错：' + e.message;
         }
-        toast('第 ' + (bi + 1) + ' 批出错：' + e.message);
+        sent.push.apply(sent, chunk);
+        toast('第 ' + (bi + 1) + ' 批请求出错：' + e.message);
       }
 
       invalidate();
       renderStats();
       renderRows();
-      setBar(((bi + 1) / batches.length) * 100);
-      footText(`正在提交：第 <b>${bi + 1}</b>/${batches.length} 批 · 成功 <b>${okNum}</b> 个 · 失败 <b>${failNum}</b> 个`, '');
+      setBar((bi + 1) / (batches.length + VERIFY_ROUNDS) * 100);
+      footText(`已发送 <b>${bi + 1}</b>/${batches.length} 批 · 共 <b>${sent.length}</b> 个 SKU`, '平台写入有延迟，全部发完后统一核实');
       if (bi + 1 < batches.length && !S.stop) await sleep(cfg.delay);
+    }
+
+    await verifySent(sent);
+
+    const okNum = sent.filter(r => r.status === 'submitted').length;
+    const pendNum = sent.filter(r => r.status === 'pending').length;
+    for (const r of sent) {
+      if (r.status !== 'pending') continue;
+      r.reason = '平台还没返回生效结果（价格一般 1~2 分钟才变），刷新页面看「长期增长」里有没有它' +
+        (r.retMsg ? '；提交接口当时说：' + r.retMsg : '');
     }
 
     S.phase = 'done';
@@ -1154,9 +1180,11 @@
     renderRows();
     renderFoot();
     setBar(100);
-    footText(`提交结束：成功 <b>${okNum}</b> 个，失败 <b>${failNum}</b> 个。`,
-      okNum ? '成功数是逐条回查核对过的（平台接口爱假报失败）。刷新页面即可看到它们变成「长期增长中」。' : '');
-    toast(`提交完成：成功 ${okNum} 个，失败 ${failNum} 个`);
+    footText(`提交结束：已确认成功 <b>${okNum}</b> 个，待确认 <b>${pendNum}</b> 个。`,
+      pendNum
+        ? '「待确认」不等于失败——平台写入慢，1~2 分钟后刷新页面对照「长期增长」即可。'
+        : '全部已回查到增长记录，刷新页面即见「长期增长中」。');
+    toast(`提交完成：确认成功 ${okNum} 个，待确认 ${pendNum} 个`);
   }
 
   // ============ 主按钮 ============
