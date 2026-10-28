@@ -11,7 +11,7 @@
 // @run-at       document-idle
 // @downloadURL  https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temulife5-%E8%87%AA%E5%8A%A8%E5%95%86%E5%93%81%E5%90%88%E8%A7%84.user.js
 // @updateURL    https://raw.githubusercontent.com/Frank-jpeg/scriptcat-temu-noexe/main/temulife5-%E8%87%AA%E5%8A%A8%E5%95%86%E5%93%81%E5%90%88%E8%A7%84.user.js
-// @version      2026.0919.1
+// @version      2026.1028.1
 // ==/UserScript==
 
 const AUTO_COMPLIANCE_CONFIG_KEY = "goldabcd_noexe_auto_compliance_config_v1";
@@ -873,7 +873,6 @@ function isEmptyPlainObject(obj) {
                 page_size: 50,
                 type: 2,
                 goods_status_list: [1, 2],
-                task_type_list: [60],
                 task_status_list: [2]
             });
 
