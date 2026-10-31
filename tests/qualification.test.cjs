@@ -14,7 +14,7 @@ function harness(options = {}) {
       calls.push({path,body,write});
       if (path.endsWith('/list')) return body.product_ids ? list([rows.find(r=>String(r.product_base_info.product_id)===body.product_ids[0])]) : list(rows.slice((body.page-1)*25,body.page*25),options.total ?? rows.length);
       if (path.endsWith('/detail')) {
-        const c=cert(body.cert_type,body.product_id==='10000');
+        const c=cert(body.cert_type,body.product_id==='10000' || (options.templateIds || []).includes(body.product_id));
         if (options.existing && body.product_id!=='10000') c.product_cert_files=[file];
         if (options.noPictures && body.product_id!=='10000') c.real_pictures=[];
         const saved=written.get(body.product_id+':'+body.cert_type);
@@ -58,9 +58,20 @@ test('双层失败和复查失败均停止，不重试写入',async()=>{
 test('扫描截断、重复、超过窗口拒绝上传',async()=>{
  for(const option of [{total:10001},{total:40},{rows:[row(10000),row(10001),row(10001)]}]){const h=harness(option);await assert.rejects(h.worker.run('10000'));assert.equal(h.written.size,0);}
 });
-test('旧配置迁移保留模板但不自动扩大运行范围',()=>{
- assert.deepEqual(q.normalizeConfig({version:1,template:'12345',targets:['99999'],enabled:true}),{version:2,template:'12345',enabled:false});
- assert.equal(q.normalizeConfig({version:2,template:'12345',enabled:true}).enabled,true);
+test('多模板共用完整扫描快照；重复末级类目模板拒绝启动', async()=>{
+ const rows=[row(10000,10856),row(10001,20000),row(10002,20000),row(10003,30000)];
+ const h=harness({rows,templateIds:['10001']});
+ const result=await h.worker.runMany([{name:'马克杯',spu:'10000'},{name:'餐盘',spu:'10001'}],{limit:0});
+ assert.equal(result.candidates,1);
+ assert.equal(h.calls.filter(c=>c.path.endsWith('/list')&&!c.body.product_ids).length,1);
+ const d=harness({rows,templateIds:['10001','10002']});
+ await assert.rejects(d.worker.runMany([{name:'A',spu:'10001'},{name:'B',spu:'10002'}]),/同一末级类目/);
+ assert.equal(d.written.size,0);
+});
+test('旧配置迁移保留模板但不自动扩大运行范围；多模板名称去重',()=>{
+ assert.deepEqual(q.normalizeConfig({version:1,template:'12345',targets:['99999'],enabled:true}),{version:3,templates:[{name:'新奇马克杯',spu:'12345'}],enabled:false});
+ assert.equal(q.normalizeConfig({version:3,templates:[{name:'帽子',spu:'12345'},{name:'帽子',spu:'67890'},{name:'坏',spu:'abc'}],enabled:true}).templates.length,1);
+ assert.equal(q.normalizeConfig({version:3,templates:[{name:'帽子',spu:'12345'}],enabled:true}).enabled,true);
 });
 test('低窗口面板贴边向上调整，窄屏不溢出',()=>{
  for(const [vw,vh] of [[607,710],[375,400],[1280,720]]){const p=q.panelPosition({left:260,bottom:560},450,360,vw,vh);assert.ok(p.left>=8&&p.top>=8);assert.ok(p.left+Math.min(450,vw-16)<=vw-8);assert.ok(p.top+Math.min(360,vh-16)<=vh-8);}

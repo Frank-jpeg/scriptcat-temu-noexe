@@ -39,7 +39,8 @@ const path = require('node:path');
   await host.locator('.stop').click();const stopped=await page.evaluate(()=>reads);
   await page.clock.fastForward(6*60*60*1000);assert.equal(await page.evaluate(()=>reads),stopped);
   await page.evaluate(()=>localStorage.setItem('agentseller-mall-info-id','456'));
-  await page.clock.fastForward(1000);assert.equal(await host.locator('.enable').isDisabled(),true);
+  await page.clock.fastForward(1100);await page.waitForFunction(()=>document.querySelector('#goldabcd-qualification-host').shadowRoot.querySelector('.status').textContent.includes('店铺已切换'));
+  assert.equal(await host.locator('.enable').isDisabled(),true);
   console.log('PASS: 小屏边界、无目标输入、迁移备份、6小时循环、暂停、切店、日志事件');
  } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1});
