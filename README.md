@@ -171,6 +171,18 @@ ScriptCat 靠比较 `@version` 大小决定是否更新。若把日期式改成�
 
 大量 SPU 建议用面板里的“导入TXT/CSV”。TXT/CSV 一行一个 SPU；Excel 表格先另存为 CSV 再导入。脚本会按 50 个 SPU 一批查询商品，避免一次性把 5000 个 SPU 塞进单个接口请求。
 
+## TEMU单店巡查脚本
+
+`TEMU单店巡查脚本.user.js` 跑在 TEMU 卖家后台，按面板勾选项逐页巡查，结果汇总到一个弹窗。当前 11 项：抽检结果明细、JIT 逾期、待发货低申报价、合规中心、VMI 未收货、收货异常通知、违规信息、店铺限制、价格申报、退货包裹、资金余额。
+
+`1.9.27` 新增「检查收货异常通知」，对应 库存管理 → 收货/入库异常处理 → 异常通知（`/wms/exception/notice`）。范围**固定为当天**（00:00:00 ~ 23:59:59），当天有待处理记录就标红；「异常处理」页（`/wms/exception/handle`）与通知页共用同一个 JS chunk 和同一个接口，只是多渲染一列「操作」，所以脚本只查一次，处理去 handle 页做。
+
+数据走接口，失败自动降级读页面表格：
+
+- `POST /athena/mms/exception/get/total`，body `{}` → `{untreatedNum, treatedNum}`，是全店累计口径，只作参考显示、不参与标红
+- `POST /athena/mms/exception/page/query/exception`，body 需 `haveSolved`（0=待处理，1=已处理）、`pageNum`、`pageSize`、`exceptionTypeList`、`subExceptionTypeList`、`timeTypeRange:{type:0, startTime, endTime}`；缺时间范围报「不能为null」
+- 请求头必须带 `mallid`，从 `localStorage['db-MallId']` 取（兜底 `mall-info-id`），**不在 cookie 里**；页面请求另带 `anti-content`，但接口不校验，脚本不带也能通
+
 ## TEMU商品信息抓取下载
 
 图片默认存到 `下载目录/店铺名/`，销量 TXT 也在同一个文件夹。`4.31.0` 起，点“批量下载符合条件商品”后的确认弹窗里多了“文件夹后缀”：填了就是 `店铺名_后缀/`，内置预选词 马克杯 / 帽子 / 洗手液，也能自由输入（自动去掉非法字符、首尾 `_` 和 `-`，上限 40 字）；留空则与以前完全一致。后缀会记住上次的值，面板状态区会显示当前后缀。

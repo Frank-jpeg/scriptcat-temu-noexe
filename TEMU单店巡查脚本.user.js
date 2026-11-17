@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TEMU单店巡查脚本
 // @namespace    https://local.temu.single.inspector
-// @version      1.9.26
+// @version      1.9.27
 // @description  单店铺 TEMU 巡查：抽检结果、JIT 逾期、合规中心、违规信息、VMI 未收货、价格申报、退货包裹、资金余额
 // @match        https://agentseller.temu.com/*
 // @match        https://seller.kuajingmaihuo.com/*
@@ -17,7 +17,7 @@
 (function () {
   'use strict';
 
-  const SCRIPT_VERSION = '1.9.26';
+  const SCRIPT_VERSION = '1.9.27';
   const APP_ID = '__temu_single_store_script_v8';
   const PANEL_ID = `${APP_ID}_panel`;
   const RESULT_DIALOG_ID = `${APP_ID}_result_dialog`;
@@ -37,6 +37,13 @@
     arrivalSoon: 201,
     arrivalOverdue: 202,
   };
+  const TEMU_EXCEPTION_TOTAL_API = 'https://seller.kuajingmaihuo.com/athena/mms/exception/get/total';
+  const TEMU_EXCEPTION_LIST_API = 'https://seller.kuajingmaihuo.com/athena/mms/exception/page/query/exception';
+  const EXCEPTION_HAVE_SOLVED = {
+    waiting: 0,
+    solved: 1,
+  };
+  const EXCEPTION_PAGE_SIZE = 50;
 
   const URLS = {
     qc: 'https://seller.kuajingmaihuo.com/wms/qc-detail',
@@ -44,6 +51,7 @@
     urgent_declared_price: 'https://agentseller.temu.com/stock/fully-mgt/order-manage-urgency',
     govern: 'https://agentseller.temu.com/govern/dashboard',
     shipping: 'https://seller.kuajingmaihuo.com/main/order-manager/shipping-list',
+    exception_notice: 'https://seller.kuajingmaihuo.com/wms/exception/notice',
     violation: 'https://agentseller.temu.com/wms/stock-mgt/violation-message',
     limited: 'https://agentseller.temu.com/labor/limited/list',
     price_rule: 'https://agentseller.temu.com/main/adjust-price-manage/order-price',
@@ -63,6 +71,7 @@
     { key: 'urgent_declared_price', label: '检查待发货低申报价', low: false },
     { key: 'govern', label: '合规中心', low: false },
     { key: 'shipping', label: `检查VMI${SHIPPING_STALE_DAYS}-${SHIPPING_MAX_DAYS}天未收货`, low: false },
+    { key: 'exception_notice', label: '检查收货异常通知', low: false },
     { key: 'violation', label: '检查违规信息待处理', low: false },
     { key: 'limited', label: '检查店铺限制记录', low: false },
     { key: 'price_rule', label: '价格申报自动助手', low: false },
@@ -361,6 +370,216 @@
       recentDays,
       bodyPreview: `接口返回 ${total} 条`,
     };
+  }
+
+  function getKuajingMallId() {
+    try {
+      const fromStorage = normalize(localStorage.getItem('db-MallId') || localStorage.getItem('mall-info-id') || '');
+      if (fromStorage) {
+        return fromStorage;
+      }
+    } catch (_error) {
+      // localStorage 不可用时退回 cookie
+    }
+    return normalize(getCookieValue('mallid'));
+  }
+
+  async function postKuajingJson(url, body) {
+    const mallid = getKuajingMallId();
+    if (!mallid) {
+      throw new Error('未取到店铺 mallid（localStorage db-MallId / mall-info-id 均为空）');
+    }
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        mallid,
+      },
+      body: JSON.stringify(body || {}),
+    });
+    if (!response || typeof response.text !== 'function') {
+      throw new Error('TEMU 接口返回异常');
+    }
+    const text = await response.text();
+    let payload = null;
+    try {
+      payload = text ? JSON.parse(text) : null;
+    } catch (_error) {
+      throw new Error(`TEMU 接口返回无法解析：${String(text || '').slice(0, 120)}`);
+    }
+    if (!response.ok || !payload || payload.success !== true) {
+      throw new Error(`TEMU 接口失败：${payload && payload.errorMsg ? payload.errorMsg : `HTTP ${response.status}`}`);
+    }
+    return payload.result || {};
+  }
+
+  function buildTodayRange() {
+    const now = new Date();
+    const day = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+    return { start: `${day} 00:00:00`, end: `${day} 23:59:59` };
+  }
+
+  function createExceptionListRequest(pageNum, pageSize, range) {
+    return {
+      haveSolved: EXCEPTION_HAVE_SOLVED.waiting,
+      pageNum,
+      pageSize,
+      exceptionTypeList: [],
+      subExceptionTypeList: [],
+      timeTypeRange: {
+        type: 0,
+        startTime: range.start,
+        endTime: range.end,
+      },
+    };
+  }
+
+  function normalizeExceptionRow(item) {
+    const feedbackAt = item && item.feedbackTime ? new Date(toInt(item.feedbackTime)) : null;
+    const hasDiff = item && item.diffNum !== null && item.diffNum !== undefined;
+    return {
+      purchaseNo: normalize(item && item.purchaseNo),
+      bizSn: normalize(item && item.bizSn),
+      exceptionType: normalize(item && item.exceptionTypeDesc),
+      diffNum: hasDiff ? toInt(item.diffNum) : null,
+      oneLevelCat: normalize(item && item.oneLevelCatDesc),
+      lastLevelCat: normalize(item && item.lastLevelCatDesc),
+      feedbackTime: formatDateTimeValue(feedbackAt),
+      warehouseProcess: normalize(item && item.warehouseProcessDesc),
+      proofPictures: toInt(item && item.proofPicturesNum),
+      canOperate: !!(item && item.canOperate),
+      exceptionSn: normalize(item && item.exceptionSn),
+    };
+  }
+
+  async function fetchExceptionRowsByApi(jobId, range) {
+    let pageNum = 1;
+    let total = 0;
+    const rows = [];
+    while (pageNum <= 10) {
+      await assertNotStopped(jobId);
+      const result = await postKuajingJson(
+        TEMU_EXCEPTION_LIST_API,
+        createExceptionListRequest(pageNum, EXCEPTION_PAGE_SIZE, range),
+      );
+      total = toInt(result && result.total);
+      const list = Array.isArray(result && result.items) ? result.items : [];
+      rows.push(...list.map(normalizeExceptionRow).filter((row) => row.purchaseNo || row.exceptionType));
+      if (!list.length || rows.length >= total) {
+        break;
+      }
+      pageNum += 1;
+    }
+    return {
+      totalRowCount: total,
+      rows,
+      pendingCount: rows.length,
+      rangeText: `${range.start} ~ ${range.end}`,
+      bodyPreview: `接口返回 ${total} 条`,
+    };
+  }
+
+  function readExceptionState() {
+    const body = normalize(document.body.innerText || '');
+    return {
+      url: location.href,
+      body: body.slice(0, 3000),
+      hasNoData: body.includes('暂无数据') || body.includes('暂无结果'),
+      loading: body.includes('加载中') || body.includes('查询中'),
+      ready: body.includes('异常类型') && body.includes('仓端处理方式'),
+    };
+  }
+
+  function extractExceptionRows() {
+    const headers = Array.from(document.querySelectorAll('thead th')).map((cell) => normalize(cell.innerText || ''));
+    const body = normalize(document.body.innerText || '');
+    const rows = Array.from(document.querySelectorAll('tbody tr'))
+      .filter((row) => visible(row))
+      .map((row) => {
+        const cells = Array.from(row.querySelectorAll('td')).map((cell) => normalize(cell.innerText || ''));
+        const mapped = {};
+        const size = Math.max(headers.length, cells.length);
+        for (let index = 0; index < size; index += 1) {
+          const key = headers[index] || `col${index}`;
+          mapped[key] = cells[index] || '';
+        }
+        return { cells, mapped };
+      })
+      .filter((row) => row.cells.length >= 8)
+      .map(({ mapped, cells }) => ({
+        purchaseNo: pickMappedValue(mapped, ['备货单号'], cells[1] || ''),
+        bizSn: '',
+        exceptionType: pickMappedValue(mapped, ['异常类型'], cells[2] || ''),
+        diffNum: pickMappedValue(mapped, ['差异件数'], cells[3] || ''),
+        oneLevelCat: pickMappedValue(mapped, ['一级类目名称'], cells[4] || ''),
+        lastLevelCat: pickMappedValue(mapped, ['末级类目名称'], cells[5] || ''),
+        feedbackTime: pickMappedValue(mapped, ['反馈时间'], cells[6] || ''),
+        warehouseProcess: pickMappedValue(mapped, ['仓端处理方式'], cells[9] || ''),
+        proofPictures: 0,
+        canOperate: false,
+        exceptionSn: '',
+      }));
+    return {
+      url: location.href,
+      source: 'ui',
+      totalRowCount: rows.length,
+      rows,
+      pendingCount: rows.length,
+      rangeText: '当天（页面默认范围）',
+      untreatedNum: null,
+      treatedNum: null,
+      hasNoData: rows.length === 0,
+      bodyPreview: body.slice(0, 3000),
+    };
+  }
+
+  async function stepExceptionNotice(job) {
+    if (!isOnTargetUrl(URLS.exception_notice)) {
+      await navigateTo(URLS.exception_notice, getStepLabel('exception_notice'));
+      return null;
+    }
+    if (!await ensureAccessReady(job.id)) {
+      return null;
+    }
+    const range = buildTodayRange();
+    try {
+      const totalResult = await postKuajingJson(TEMU_EXCEPTION_TOTAL_API, {});
+      const listResult = await fetchExceptionRowsByApi(job.id, range);
+      const data = Object.assign({}, listResult, {
+        source: 'api',
+        untreatedNum: toInt(totalResult && totalResult.untreatedNum),
+        treatedNum: toInt(totalResult && totalResult.treatedNum),
+      });
+      await appendJobLog(
+        data.pendingCount > 0 ? 'WARN' : 'INFO',
+        data.pendingCount > 0
+          ? `收货异常：当天待处理 ${data.pendingCount} 条（累计未处理 ${data.untreatedNum}）`
+          : `收货异常：当天无待处理（累计未处理 ${data.untreatedNum}，已处理 ${data.treatedNum}）`,
+      );
+      return { completed: true, data };
+    } catch (error) {
+      const message = error && error.message ? error.message : String(error);
+      await appendJobLog('WARN', `收货异常接口失败，改读页面表格：${message}`);
+      await updateJobMessage('收货异常接口失败，等待页面表格加载');
+    }
+    const deadline = Date.now() + 60000;
+    while (Date.now() < deadline) {
+      if (!await ensureAccessReady(job.id)) {
+        continue;
+      }
+      const state = readExceptionState();
+      if (state.ready && !state.loading) {
+        const data = extractExceptionRows();
+        await appendJobLog(
+          data.pendingCount > 0 ? 'WARN' : 'INFO',
+          data.pendingCount > 0 ? `收货异常：页面待处理 ${data.pendingCount} 条` : '收货异常：页面未命中待处理',
+        );
+        return { completed: true, data };
+      }
+      await updateJobMessage(`异常通知页已打开，等待表格加载：${state.body.slice(0, 80)}`);
+      await checkedSleep(job.id, 1500);
+    }
+    throw new Error('等待异常通知页超时');
   }
 
   function escapeRegExp(value) {
@@ -774,6 +993,9 @@
     if (enabledChecks.violation && toInt(results.violation && results.violation.pendingCount) > 0) {
       reasons.push(`违规信息待处理${toInt(results.violation.pendingCount)}条`);
     }
+    if (enabledChecks.exception_notice && toInt(results.exception_notice && results.exception_notice.pendingCount) > 0) {
+      reasons.push(`收货异常待处理${toInt(results.exception_notice.pendingCount)}条（异常处理页）`);
+    }
     if (enabledChecks.limited && results.limited && results.limited.needsManual) {
       reasons.push('店铺限制记录命中适用法律法规');
     }
@@ -817,6 +1039,36 @@
         product,
         sourceRowPreview,
         summary: `${orderNo}｜申报价 ${declaredPriceText}｜状态 ${status}｜创建 ${createdTime}｜商品 ${product}`,
+      };
+    });
+  }
+
+  function buildExceptionDetails(result) {
+    const rows = Array.isArray(result && result.rows) ? result.rows : [];
+    return rows.slice(0, 20).map((row, index) => {
+      const orderNo = normalize(row.purchaseNo) || normalize(row.bizSn) || `第${index + 1}条`;
+      const type = truncateDiagnosticText(row.exceptionType || '-', 80);
+      const diffText = row.diffNum === null || row.diffNum === undefined ? '-' : String(row.diffNum);
+      const catText = [normalize(row.oneLevelCat), normalize(row.lastLevelCat)].filter(Boolean).join(' / ') || '-';
+      const timeText = normalize(row.feedbackTime) || '-';
+      const processText = normalize(row.warehouseProcess) || '-';
+      return {
+        orderNo,
+        declaredPriceText: type,
+        status: processText,
+        createdTime: timeText,
+        product: catText,
+        sourceRowPreview: [
+          `备货单号: ${orderNo}`,
+          `异常类型: ${type}`,
+          `差异件数: ${diffText}`,
+          `类目: ${catText}`,
+          `反馈时间: ${timeText}`,
+          `仓端处理方式: ${processText}`,
+          row.proofPictures ? `凭证图片: ${row.proofPictures} 张` : '',
+          row.canOperate ? '可操作: 是' : '可操作: 否（到异常处理页查看）',
+        ].filter(Boolean).join('\n'),
+        summary: `${orderNo}｜${type}｜差异 ${diffText}｜${catText}｜${timeText}｜仓端 ${processText}`,
       };
     });
   }
@@ -873,6 +1125,22 @@
         label: `VMI${SHIPPING_STALE_DAYS}-${SHIPPING_MAX_DAYS}天未收货`,
         manual: staleCount > 0,
         text: `${staleCount} 单`,
+      });
+    }
+    if (enabledChecks.exception_notice && results.exception_notice) {
+      const pendingCount = toInt(results.exception_notice.pendingCount);
+      const untreatedNum = results.exception_notice.untreatedNum;
+      const treatedNum = results.exception_notice.treatedNum;
+      const sourceTag = results.exception_notice.source === 'api' ? '(接口)' : '(页面)';
+      const totalText = untreatedNum === null || untreatedNum === undefined
+        ? '累计未处理 -'
+        : `累计未处理 ${toInt(untreatedNum)}，已处理 ${toInt(treatedNum)}`;
+      items.push({
+        key: 'exception_notice',
+        label: `收货异常通知${sourceTag}`,
+        manual: pendingCount > 0,
+        text: `当天待处理 ${pendingCount}，${totalText}`,
+        details: buildExceptionDetails(results.exception_notice),
       });
     }
     if (enabledChecks.violation && results.violation) {
@@ -3506,6 +3774,7 @@
     urgent_declared_price: stepUrgentDeclaredPrice,
     govern: stepGovern,
     shipping: stepShipping,
+    exception_notice: stepExceptionNotice,
     violation: stepViolation,
     limited: stepLimited,
     price_rule: stepPriceRule,
